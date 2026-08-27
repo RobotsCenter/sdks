@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13"}
+      - run: python -m json.tool contracts/openapi.json >/dev/null
+      - run: python -m unittest contracts/test_contract.py
+
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: {python-version: ["3.11", "3.12", "3.13", "3.14"]}
+    defaults: {run: {working-directory: packages/python}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "${{ matrix.python-version }}", cache: pip}
+      - run: python -m pip install -e '.[dev]'
+      - run: ruff check .
+      - run: mypy src
+      - run: pytest
+      - run: python -m build
+
+  typescript:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: {node-version: [22, 24]}
+    defaults: {run: {working-directory: packages/typescript}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "${{ matrix.node-version }}", cache: npm, cache-dependency-path: packages/typescript/package-lock.json}
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+      - run: npm pack --dry-run
+
+  elixir:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: {otp-version: ["27.3", "28.4"]}
+    defaults: {run: {working-directory: packages/elixir}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with: {elixir-version: "1.18.4", otp-version: "${{ matrix.otp-version }}"}
+      - run: mix deps.get
+      - run: mix format --check-formatted
+      - run: mix compile --warnings-as-errors
+      - run: mix test
+      - run: mix hex.build

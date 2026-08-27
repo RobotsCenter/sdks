@@ -1,0 +1,83 @@
+name: Release package
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        type: choice
+        options: [python, typescript, elixir]
+        required: true
+      ref:
+        description: Exact signed component tag, such as python-v0.1.0
+        required: true
+      publish:
+        description: Publish after protected-environment approval
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate-ref:
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.validate.outputs.package }}
+    steps:
+      - id: validate
+        env:
+          PACKAGE: ${{ inputs.package }}
+          REF: ${{ inputs.ref }}
+        run: |
+          [[ "$REF" =~ ^${PACKAGE}-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
+
+  python:
+    if: inputs.package == 'python'
+    needs: validate-ref
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: "${{ inputs.ref }}"}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13"}
+      - run: python -m pip install build
+      - run: python -m build packages/python
+      - uses: actions/upload-artifact@v4
+        with: {name: python-distributions, path: packages/python/dist/}
+      - if: inputs.publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with: {packages-dir: packages/python/dist/}
+
+  typescript:
+    if: inputs.package == 'typescript'
+    needs: validate-ref
+    runs-on: ubuntu-latest
+    environment: npm
+    defaults: {run: {working-directory: packages/typescript}}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: "${{ inputs.ref }}"}
+      - uses: actions/setup-node@v4
+        with: {node-version: 24, registry-url: "https://registry.npmjs.org"}
+      - run: npm ci && npm test && npm run build && npm pack --dry-run
+      - if: inputs.publish
+        run: npm publish --provenance --access public
+
+  elixir:
+    if: inputs.package == 'elixir'
+    needs: validate-ref
+    runs-on: ubuntu-latest
+    environment: hex
+    defaults: {run: {working-directory: packages/elixir}}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: "${{ inputs.ref }}"}
+      - uses: erlef/setup-beam@v1
+        with: {elixir-version: "1.18.4", otp-version: "28.4.2"}
+      - run: mix deps.get && mix test && mix hex.build
+      - if: inputs.publish
+        env: {HEX_API_KEY: "${{ secrets.HEX_API_KEY }}"}
+        run: mix hex.publish --yes

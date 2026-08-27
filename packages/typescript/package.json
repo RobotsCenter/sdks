@@ -1,0 +1,39 @@
+{
+  "name": "@robotscenter/sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript SDK for the Robots Center API",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {"node": "^22.0.0 || ^24.0.0"},
+  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RobotsCenter/sdks.git",
+    "directory": "packages/typescript"
+  },
+  "publishConfig": {"access": "public", "provenance": true},
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "prepack": "npm run build"
+  },
+  "dependencies": {"phoenix": "^1.8.0"},
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/phoenix": "^1.6.4",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

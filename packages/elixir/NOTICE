@@ -1,0 +1,7 @@
+Robots Center SDKs
+Copyright 2026 Robots Center contributors
+
+This product includes software developed by Robots Center contributors.
+
+The SDKs are clean implementations of the public Robots Center API contract.
+They do not contain source copied from the historical CACP SDK repositories.

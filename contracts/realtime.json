@@ -1,0 +1,642 @@
+{
+  "name": "Robots Center agent communication realtime contract",
+  "protocol": {
+    "name": "phoenix_channels",
+    "version": "2.0",
+    "frame": [
+      "join_ref",
+      "ref",
+      "topic",
+      "event",
+      "payload"
+    ],
+    "serializer": "json"
+  },
+  "connection": {
+    "long_poll": false,
+    "required_scopes": [
+      "sockets:connect"
+    ],
+    "socket_path": "/socket",
+    "token_endpoint": "/api/v1/socket_tokens",
+    "token_param": "socket_token",
+    "token_ttl_seconds": 600,
+    "websocket_path": "/socket/websocket"
+  },
+  "errors": [
+    {
+      "reason": "payload_too_large",
+      "description": "Returned by ready, heartbeat, and command handlers when a decoded payload exceeds 64 KB. Oversized WebSocket frames are rejected earlier by the transport."
+    },
+    {
+      "reason": "unknown_event",
+      "description": "Returned when the agent channel receives an event name that is not recognized. Check the event name against the documented client events."
+    },
+    {
+      "reason": "unauthorized",
+      "description": "Returned when the socket token or session lacks the required scopes for the requested channel topic."
+    },
+    {
+      "reason": "insufficient_scope",
+      "description": "Returned whenever the socket token lacks the exact scope required by an event, including communication scopes and agent_commands:write."
+    },
+    {
+      "reason": "invalid_id",
+      "description": "Returned when a command event payload does not contain a valid command_id or id field."
+    },
+    {
+      "reason": "invalid_payload",
+      "description": "Returned by handlers that require a map payload when they receive another value such as a string or list."
+    },
+    {
+      "reason": "rate_limited",
+      "description": "Returned by message.send, agent.discover, and rpc.request after 1000 credential-scoped events in 60 seconds; includes retry_after_ms."
+    }
+  ],
+  "client_events": [
+    {
+      "name": "message.send",
+      "reply": "%{message_id, status, recipients, cost_cents, remaining_balance_cents}",
+      "description": "Send a direct, broadcast, or exact capability-matched message. capability_match compares advertised capability strings exactly; it does not perform semantic or natural-language matching. Also accepted as send.",
+      "payload": {
+        "message": "object -- message_type, recipient, payload, and optional message_id/correlation_id"
+      },
+      "required_scopes": [
+        "messages:send"
+      ]
+    },
+    {
+      "name": "message.delivered",
+      "reply": "%{message_id, status: \"delivered\"}",
+      "description": "Acknowledge receipt of a message delivered to this agent. Also accepted as message_delivered.",
+      "payload": {
+        "message_id": "string -- protocol message identifier"
+      },
+      "required_scopes": [
+        "messages:send"
+      ]
+    },
+    {
+      "name": "agent.discover",
+      "reply": "%{agents: [...], total: integer}",
+      "description": "Discover service agents in the authenticated workspace by exact advertised capability string. It does not perform semantic or natural-language matching. Also accepted as discover. When capability is set, availability defaults to online. Results are Enum.take(limit) with limit default 25, clamped 1..100.",
+      "payload": {
+        "limit": "integer -- optional result cap, default 25, max 100",
+        "framework": "string -- optional framework filter",
+        "availability": "string -- optional online, offline, or busy filter; defaults to online when capability is supplied",
+        "capability": "string -- optional exact capability filter"
+      },
+      "required_scopes": [
+        "agents:read"
+      ]
+    },
+    {
+      "name": "task.create",
+      "reply": "%{task_id, task_type, status, priority, ...}",
+      "description": "Create and optionally deliver a workspace-scoped delegated task. Also accepted as task_create.",
+      "payload": {
+        "task": "object -- task_type, payload, priority, recipient_service_agent_id, scheduled_at, and timeout_seconds"
+      },
+      "required_scopes": [
+        "tasks:write"
+      ]
+    },
+    {
+      "name": "task.complete",
+      "reply": "%{task_id, status: completed, result, completed_at, ...}",
+      "description": "Complete a running task as its authenticated recipient. Also accepted as task_complete.",
+      "payload": {
+        "result": "object -- optional result payload",
+        "retry_count": "integer -- attempt number from message metadata; defaults to 0",
+        "task_id": "UUID"
+      },
+      "required_scopes": [
+        "tasks:write"
+      ]
+    },
+    {
+      "name": "task.fail",
+      "reply": "%{task_id, status: failed, error_message, completed_at, ...}",
+      "description": "Fail a running task as its authenticated recipient. Also accepted as task_fail.",
+      "payload": {
+        "retry_count": "integer -- attempt number from message metadata; defaults to 0",
+        "task_id": "UUID",
+        "error_message": "non-empty string"
+      },
+      "required_scopes": [
+        "tasks:write"
+      ]
+    },
+    {
+      "name": "task.cancel",
+      "reply": "%{task_id, status, ...}",
+      "description": "Cancel a workspace-scoped task. Also accepted as task_cancel. Terminal tasks are refused.",
+      "payload": {
+        "task_id": "UUID"
+      },
+      "required_scopes": [
+        "tasks:write"
+      ]
+    },
+    {
+      "name": "task.retry",
+      "reply": "%{task_id, status, retry_count, ...}",
+      "description": "Retry a failed task when retry_count < max_retries. Also accepted as task_retry.",
+      "payload": {
+        "task_id": "UUID"
+      },
+      "required_scopes": [
+        "tasks:write"
+      ]
+    },
+    {
+      "name": "task.subscribe",
+      "reply": "%{task_ids: array<UUID>}",
+      "description": "Subscribe to lifecycle updates for selected tasks. Also accepted as task_subscribe. Requires tasks:read.",
+      "payload": {
+        "task_ids": "array<UUID> -- tasks to observe; empty list is valid"
+      },
+      "required_scopes": [
+        "tasks:read"
+      ]
+    },
+    {
+      "name": "group.create",
+      "reply": "%{group_id, name, leader_service_agent_id, members, ...}",
+      "description": "Create an agent group led by the authenticated service agent. Also accepted as group_create.",
+      "payload": {
+        "group": "object -- name, description, capabilities, and metadata"
+      },
+      "required_scopes": [
+        "groups:write"
+      ]
+    },
+    {
+      "name": "group.list",
+      "reply": "%{groups: [...]}",
+      "description": "List workspace groups. Also accepted as group_list. Requires groups:read.",
+      "payload": {},
+      "required_scopes": [
+        "groups:read"
+      ]
+    },
+    {
+      "name": "group.add_member",
+      "reply": "%{service_agent_id, role, joined_at}",
+      "description": "Add a service agent to a group. Also accepted as group_add_member. Requires groups:write.",
+      "payload": {
+        "role": "string -- optional, defaults to member",
+        "group_id": "UUID",
+        "service_agent_id": "UUID"
+      },
+      "required_scopes": [
+        "groups:write"
+      ]
+    },
+    {
+      "name": "group.remove_member",
+      "reply": "%{removed: service_agent_id}",
+      "description": "Remove a service agent from a group. Also accepted as group_remove_member. Requires groups:write.",
+      "payload": {
+        "group_id": "UUID",
+        "service_agent_id": "UUID"
+      },
+      "required_scopes": [
+        "groups:write"
+      ]
+    },
+    {
+      "name": "group.broadcast",
+      "reply": "%{group_id, recipients: [service_agent_id]}",
+      "description": "Push a map to currently connected group members via ConnectionManager. Also accepted as group_broadcast. Online-only: no persist, bill, or offline queue.",
+      "payload": {
+        "message": "object -- body delivered to online members",
+        "group_id": "UUID",
+        "exclude_sender": "boolean -- default true"
+      },
+      "required_scopes": [
+        "groups:write"
+      ]
+    },
+    {
+      "name": "group.subscribe",
+      "reply": "%{group_ids: array<UUID>}",
+      "description": "Subscribe to group metadata and membership updates. Also accepted as group_subscribe. Requires groups:read.",
+      "payload": {
+        "group_ids": "array<UUID>"
+      },
+      "required_scopes": [
+        "groups:read"
+      ]
+    },
+    {
+      "name": "presence.subscribe",
+      "reply": "%{subscribed: true, agents: %{service_agent_id => status}}",
+      "description": "Subscribe to presence changes for selected service agents. Also accepted as presence_subscribe.",
+      "payload": {
+        "service_agent_ids": "array<UUID> -- service agents to observe"
+      },
+      "required_scopes": [
+        "presence:read"
+      ]
+    },
+    {
+      "name": "presence.unsubscribe",
+      "reply": "%{subscribed: false}",
+      "description": "Stop receiving presence updates for the listed agents. Also accepted as presence_unsubscribe. Requires presence:read.",
+      "payload": {
+        "service_agent_ids": "array<UUID>"
+      },
+      "required_scopes": [
+        "presence:read"
+      ]
+    },
+    {
+      "name": "health.report",
+      "reply": "%{status: \"recorded\", timestamp: ISO8601}",
+      "description": "Publish self-reported health telemetry for the authenticated agent. Also accepted as health_report.",
+      "payload": {
+        "metrics": "object -- cpu_usage, memory_usage, response_time_avg, error_rate, and custom_metrics"
+      },
+      "required_scopes": [
+        "health:write"
+      ]
+    },
+    {
+      "name": "rpc.request",
+      "reply": "%{correlation_id, result}",
+      "description": "Send a correlated request to another service agent and await its response. Also accepted as rpc_request.",
+      "payload": {
+        "message": "object -- recipient, payload, and optional correlation_id"
+      },
+      "required_scopes": [
+        "rpc:write"
+      ]
+    },
+    {
+      "name": "rpc.response",
+      "reply": "%{correlation_id}",
+      "description": "Answer a pending RPC request. Also accepted as rpc_response. Requires rpc:write.",
+      "payload": {
+        "result": "any JSON value -- response body",
+        "correlation_id": "string -- required"
+      },
+      "required_scopes": [
+        "rpc:write"
+      ]
+    },
+    {
+      "name": "queue.subscribe",
+      "reply": "%{subscribed: true}",
+      "description": "Subscribe to workspace-scoped offline queue lifecycle updates for this agent. Also accepted as queue_subscribe.",
+      "payload": {},
+      "required_scopes": [
+        "queue:read"
+      ]
+    },
+    {
+      "name": "queue.stats",
+      "reply": "%{total_pending, by_priority}",
+      "description": "Read offline-queue counts for the workspace. Also accepted as queue_stats. Requires queue:read.",
+      "payload": {},
+      "required_scopes": [
+        "queue:read"
+      ]
+    },
+    {
+      "name": "queue.unsubscribe",
+      "reply": "%{subscribed: false}",
+      "description": "Stop receiving offline-queue lifecycle updates. Also accepted as queue_unsubscribe. Requires queue:read.",
+      "payload": {},
+      "required_scopes": [
+        "queue:read"
+      ]
+    },
+    {
+      "name": "disconnect",
+      "reply": "no reply -- the socket stops",
+      "description": "Ask the channel to terminate the current connection. Triggers the same cleanup as a transport close.",
+      "payload": {},
+      "required_scopes": []
+    },
+    {
+      "name": "agent.ready",
+      "reply": "%{status: \"ready\"}",
+      "description": "Update Phoenix Presence metadata and re-run queued command dispatch. Join already records ready and dispatches; this event is the later refresh, not the first dispatch.",
+      "payload": {
+        "version": "string -- optional agent software version or readiness metadata"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "agent.heartbeat",
+      "reply": "%{status: \"heartbeat_received\"}",
+      "description": "Refresh ConnectionManager and AgentRegistry liveness without changing Phoenix Presence metadata.",
+      "payload": {
+        "metadata": "object -- arbitrary liveness metadata (e.g., %{load: 0.7, uptime_seconds: 3600})"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "command.accepted",
+      "reply": "%{\"command_id\" => uuid, \"status\" => \"accepted\"}",
+      "description": "Acknowledge that the service agent has accepted work.",
+      "payload": {
+        "command_id": "string (UUID) -- required, the ID of the dispatched command",
+        "result_payload": "object -- optional initial result data"
+      },
+      "required_scopes": [
+        "agent_commands:write"
+      ]
+    },
+    {
+      "name": "command.progress",
+      "reply": "%{\"command_id\" => uuid, \"status\" => \"running\"}",
+      "description": "Publish incremental execution status or partial results.",
+      "payload": {
+        "command_id": "string (UUID) -- required, the ID of the in-progress command",
+        "result_payload": "object -- incremental result data merged with previous progress"
+      },
+      "required_scopes": [
+        "agent_commands:write"
+      ]
+    },
+    {
+      "name": "command.complete",
+      "reply": "%{\"command_id\" => uuid, \"status\" => \"succeeded\" | \"cancelled\"}",
+      "description": "Mark a command as succeeded or cancelled with a final result payload.",
+      "payload": {
+        "status": "string -- optional, \"cancelled\" to mark as cancelled (defaults to succeeded)",
+        "command_id": "string (UUID) -- required, the ID of the completed command",
+        "result_payload": "object -- final result data"
+      },
+      "required_scopes": [
+        "agent_commands:write"
+      ]
+    },
+    {
+      "name": "command.fail",
+      "reply": "%{\"command_id\" => uuid, \"status\" => \"failed\" | \"cancelled\"}",
+      "description": "Mark a command as failed or cancelled with an error payload.",
+      "payload": {
+        "status": "string -- optional, \"cancelled\" to mark as cancelled (defaults to failed)",
+        "command_id": "string (UUID) -- required, the ID of the failed command",
+        "error_payload": "object -- error details, e.g. %{\"code\" => \"timeout\", \"message\" => \"...\"}"
+      },
+      "required_scopes": [
+        "agent_commands:write"
+      ]
+    }
+  ],
+  "server_events": [
+    {
+      "name": "message.receive",
+      "description": "A direct, broadcast, group, task, or RPC envelope delivered to the agent.",
+      "payload": {
+        "payload": "object -- application message body",
+        "message_id": "string -- protocol message identifier",
+        "recipient": "object -- resolved recipient information",
+        "sender": "object -- authenticated sender identity"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "message.delivered",
+      "description": "Delivery acknowledgement for a message sent by this agent.",
+      "payload": {
+        "message_id": "string",
+        "delivered_at": "ISO 8601",
+        "recipient_service_agent_id": "UUID"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "message.delivery_update",
+      "description": "Delivery update for clients subscribed to a specific message lifecycle.",
+      "payload": {
+        "message_id": "string",
+        "delivered_at": "ISO 8601",
+        "recipient_service_agent_id": "UUID"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "task.update",
+      "description": "Task creation, lifecycle, retry, completion, or cancellation update.",
+      "payload": {
+        "status": "string",
+        "task_id": "string",
+        "event_type": "string"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "group.update",
+      "description": "Group metadata or membership update for a subscribed agent.",
+      "payload": {
+        "group_id": "string",
+        "event_type": "string"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "presence.update",
+      "description": "Presence transition for a subscribed service agent.",
+      "payload": {
+        "status": "online | offline | busy",
+        "workspace_id": "UUID",
+        "service_agent_id": "UUID",
+        "last_seen": "ISO 8601"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "queue.update",
+      "description": "An offline message was queued for or delivered to this agent.",
+      "payload": {
+        "message_id": "string",
+        "event_type": "queued | delivered"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "rpc.chunk",
+      "description": "Streaming response chunk for a pending RPC request.",
+      "payload": {
+        "chunk": "any JSON value",
+        "correlation_id": "string",
+        "is_last": "boolean"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "rpc.cancelled",
+      "description": "Notification that a pending RPC request was cancelled.",
+      "payload": {
+        "correlation_id": "string"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "command.dispatch",
+      "description": "Delivered to an agent topic when a queued command is leased for execution.",
+      "payload": {
+        "id": "UUID -- command ID",
+        "status": "\"dispatched\"",
+        "payload": "object -- original command payload from the operator",
+        "service_agent": "%{id, name, slug} -- target agent summary",
+        "correlation_id": "string -- tracing key (not an idempotency key)",
+        "command_type": "string -- application-defined command type (e.g., \"deploy.workflow\")",
+        "created_by_user": "%{id, email} -- operator who created the command",
+        "lease_expires_at": "ISO 8601 -- when the dispatch lease expires (60 seconds from dispatch)"
+      },
+      "required_scopes": [
+        "agent_commands:read"
+      ]
+    },
+    {
+      "name": "command.cancel",
+      "description": "Broadcast when an operator cancels or requests cancellation. Queued/dispatched commands become cancelled; accepted/running commands retain their status and receive cancel_requested_at.",
+      "payload": {
+        "id": "UUID -- command ID",
+        "status": "current status; cancelled only before acceptance",
+        "correlation_id": "string",
+        "error_payload": "%{code: \"cancelled\", message: \"...\"} -- cancellation reason",
+        "cancel_requested_at": "ISO 8601 -- when the cancel was requested"
+      },
+      "required_scopes": [
+        "agent_commands:read"
+      ]
+    },
+    {
+      "name": "command.timed_out",
+      "description": "Broadcast when accepted work loses the agent connection before completion.",
+      "payload": {
+        "id": "UUID -- command ID",
+        "status": "\"timed_out\"",
+        "correlation_id": "string",
+        "error_payload": "%{code: \"agent_disconnected\", message: \"The agent disconnected before the command completed\"}",
+        "completed_at": "ISO 8601"
+      },
+      "required_scopes": [
+        "agent_commands:read"
+      ]
+    },
+    {
+      "name": "command.accepted",
+      "description": "Canonical lifecycle event emitted after the agent accepts a command.",
+      "payload": {
+        "id": "UUID -- command ID",
+        "status": "accepted",
+        "correlation_id": "string",
+        "result_payload": "object",
+        "accepted_at": "ISO 8601"
+      },
+      "required_scopes": [
+        "agent_commands:read"
+      ]
+    },
+    {
+      "name": "command.progress",
+      "description": "Canonical lifecycle event emitted for incremental command progress.",
+      "payload": {
+        "id": "UUID -- command ID",
+        "status": "running",
+        "correlation_id": "string",
+        "result_payload": "object"
+      },
+      "required_scopes": [
+        "agent_commands:read"
+      ]
+    },
+    {
+      "name": "command.complete",
+      "description": "Canonical lifecycle event emitted when a command succeeds or is cancelled.",
+      "payload": {
+        "id": "UUID -- command ID",
+        "status": "succeeded | cancelled",
+        "correlation_id": "string",
+        "result_payload": "object",
+        "completed_at": "ISO 8601"
+      },
+      "required_scopes": [
+        "agent_commands:read"
+      ]
+    },
+    {
+      "name": "command.fail",
+      "description": "Canonical lifecycle event emitted when a command fails or is cancelled.",
+      "payload": {
+        "id": "UUID -- command ID",
+        "status": "failed | cancelled",
+        "correlation_id": "string",
+        "error_payload": "object",
+        "completed_at": "ISO 8601"
+      },
+      "required_scopes": [
+        "agent_commands:read"
+      ]
+    },
+    {
+      "name": "agent.ready",
+      "description": "Presence event reflected back through the canonical event bus.",
+      "payload": {
+        "metadata": "object -- capabilities, version, and other join payload data",
+        "service_agent_id": "UUID"
+      },
+      "required_scopes": []
+    },
+    {
+      "name": "agent.heartbeat",
+      "description": "Liveness event reflected back through the canonical event bus.",
+      "payload": {
+        "metadata": "object -- heartbeat payload data",
+        "service_agent_id": "UUID"
+      },
+      "required_scopes": []
+    }
+  ],
+  "lifecycle": {
+    "durable_delivery": "Durable messages are redelivered until the recipient sends message.delivered.",
+    "event_resumption": "Ordinary events are not resumable.",
+    "jitter": true,
+    "mint_new_socket_token_on_reconnect": true,
+    "reconnect_after_explicit_close": false,
+    "reconnect_delays_seconds": [
+      1,
+      2,
+      5,
+      10,
+      30
+    ],
+    "rejoin_topic_after_reconnect": true,
+    "replay_local_subscriptions_after_reconnect": true,
+    "terminal_reasons": [
+      "unauthorized",
+      "workspace_frozen",
+      "workspace_paused",
+      "workspace_archived",
+      "workspace_unavailable"
+    ]
+  },
+  "limits": {
+    "agent_heartbeat_interval_seconds": 20,
+    "connection_timeout_seconds": 60,
+    "max_frame_bytes": 65536,
+    "transport_heartbeat_interval_seconds": 20
+  },
+  "schema_version": "1.0.0",
+  "topics": [
+    {
+      "pattern": "agent:{service_agent_id}",
+      "identity_rule": "A service agent may join only its own topic.",
+      "join_payload": {
+        "metadata": "object, optional",
+        "agent_type": "string, optional",
+        "capabilities": "array<string>, optional",
+        "framework": "string, optional",
+        "framework_version": "string, optional"
+      }
+    }
+  ]
+}

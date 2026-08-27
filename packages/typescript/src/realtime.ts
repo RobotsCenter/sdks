@@ -1,0 +1,117 @@
+import { Channel, Socket } from "phoenix";
+import { RealtimeError } from "./errors.js";
+
+export interface RealtimeOptions {
+  baseUrl?: string;
+  socketToken?: string;
+  serviceAgentId?: string;
+  tokenProvider?: () => Promise<{socket_token: string; service_agent_id: string}>;
+  joinPayload?: Record<string, unknown>;
+  timeoutMs?: number;
+  logger?: (kind: string, message: string, data?: unknown) => void;
+}
+
+export class Realtime {
+  socket: Socket | undefined;
+  channel: Channel | undefined;
+  private readonly timeoutMs: number;
+  private readonly options: RealtimeOptions;
+  private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private reconnectAttempt = 0;
+  private explicitlyClosed = false;
+  private readonly subscriptions = new Map<string, [string, Record<string, unknown>]>();
+
+  constructor(options: RealtimeOptions) {
+    this.options = options;
+    this.timeoutMs = options.timeoutMs ?? 10_000;
+  }
+
+  async connect(): Promise<Record<string, unknown>> {
+    this.explicitlyClosed = false;
+    const fresh = this.options.tokenProvider ? await this.options.tokenProvider() : undefined;
+    const socketToken = fresh?.socket_token ?? this.options.socketToken;
+    const serviceAgentId = fresh?.service_agent_id ?? this.options.serviceAgentId;
+    if (!socketToken || !serviceAgentId) throw new RealtimeError("tokenProvider or socketToken and serviceAgentId are required");
+    const base = (this.options.baseUrl ?? "https://robotscenter.net").replace(/^http/, "ws").replace(/\/$/, "");
+    const socketOptions = {
+      params: { socket_token: socketToken },
+      reconnectAfterMs: () => 86_400_000,
+      heartbeatIntervalMs: 20_000,
+      ...(this.options.logger ? {logger: this.options.logger} : {}),
+    };
+    this.socket = new Socket(`${base}/socket`, socketOptions);
+    this.socket.onClose(() => this.scheduleReconnect());
+    this.channel = this.socket.channel(`agent:${serviceAgentId}`, this.options.joinPayload ?? {});
+    this.socket.connect();
+    const response = await pushPromise(this.channel.join(this.timeoutMs), "channel join");
+    this.reconnectAttempt = 0;
+    for (const [event, payload] of this.subscriptions.values()) this.channel.push(event, payload, this.timeoutMs);
+    this.heartbeatTimer = setInterval(() => this.channel?.push("agent.heartbeat", {}, this.timeoutMs), 20_000);
+    return response;
+  }
+
+  close(): void {
+    this.explicitlyClosed = true;
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = undefined;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    this.channel?.leave();
+    this.socket?.disconnect();
+    this.channel = undefined;
+    this.socket = undefined;
+  }
+
+  push(event: string, payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const bytes = new TextEncoder().encode(JSON.stringify([null, null, "agent", event, payload])).byteLength;
+    if (bytes > 65_536) return Promise.reject(new RealtimeError("Phoenix frame exceeds the 64 KiB payload limit"));
+    if (!this.channel) return Promise.reject(new RealtimeError("realtime channel is not connected"));
+    return pushPromise(this.channel.push(event, payload, this.timeoutMs), event);
+  }
+
+  on(event: string, handler: (payload: Record<string, unknown>) => void): number {
+    if (!this.channel) throw new RealtimeError("realtime channel is not connected");
+    return this.channel.on(event, handler);
+  }
+
+  off(event: string, ref?: number): void {
+    this.channel?.off(event, ref);
+  }
+
+  ready(metadata: Record<string, unknown> = {}) { return this.push("agent.ready", metadata); }
+  heartbeat(metadata: Record<string, unknown> = {}) { return this.push("agent.heartbeat", metadata); }
+  sendMessage(message: Record<string, unknown>) { return this.push("message.send", message); }
+  discover(query: Record<string, unknown>) { return this.push("agent.discover", query); }
+  createTask(task: Record<string, unknown>) { return this.push("task.create", task); }
+  rpc(request: Record<string, unknown>) { return this.push("rpc.request", request); }
+  subscribeTasks(taskIds: string[]) { return this.subscribe("task.subscribe", {task_ids: taskIds}); }
+  subscribeGroups(groupIds: string[]) { return this.subscribe("group.subscribe", {group_ids: groupIds}); }
+  subscribePresence(serviceAgentIds: string[]) { return this.subscribe("presence.subscribe", {service_agent_ids: serviceAgentIds}); }
+  subscribeQueue() { return this.subscribe("queue.subscribe", {}); }
+
+  private subscribe(event: string, payload: Record<string, unknown>) {
+    this.subscriptions.set(`${event}:${JSON.stringify(payload)}`, [event, payload]);
+    return this.push(event, payload);
+  }
+
+  private scheduleReconnect(): void {
+    if (this.explicitlyClosed || this.reconnectTimer) return;
+    this.socket?.disconnect();
+    const schedule = [1_000, 2_000, 5_000, 10_000, 30_000];
+    const base = schedule[Math.min(this.reconnectAttempt, schedule.length - 1)]!;
+    this.reconnectAttempt += 1;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.connect().catch(() => this.scheduleReconnect());
+    }, base * (0.8 + Math.random() * 0.4));
+  }
+}
+
+function pushPromise(push: ReturnType<Channel["push"]>, operation: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    push.receive("ok", (response) => resolve(response as Record<string, unknown>));
+    push.receive("error", (response) => reject(new RealtimeError(`${operation} failed: ${JSON.stringify(response)}`)));
+    push.receive("timeout", () => reject(new RealtimeError(`${operation} timed out`)));
+  });
+}
