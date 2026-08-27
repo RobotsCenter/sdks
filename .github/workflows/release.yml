@@ -134,7 +134,7 @@ jobs:
       - run: for artifact in release/distributions/*; do python scripts/validate_artifact.py python "$artifact" "${{ needs.validate-ref.outputs.version }}"; done
       - run: scripts/smoke_python_artifact.sh release/distributions/*.whl
       - run: python scripts/write_provenance.py --package python --tag "${{ inputs.ref }}" --commit "${{ needs.validate-ref.outputs.commit }}" --artifact-dir release
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-${{ inputs.ref }}
           path: release/
@@ -155,7 +155,7 @@ jobs:
       - run: python scripts/validate_artifact.py typescript release/distributions/*.tgz "${{ needs.validate-ref.outputs.version }}"
       - run: scripts/smoke_typescript_artifact.sh release/distributions/*.tgz
       - run: python scripts/write_provenance.py --package typescript --tag "${{ inputs.ref }}" --commit "${{ needs.validate-ref.outputs.commit }}" --artifact-dir release
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: typescript-${{ inputs.ref }}
           path: release/
@@ -176,7 +176,7 @@ jobs:
       - run: python scripts/validate_artifact.py elixir release/distributions/*.tar "${{ needs.validate-ref.outputs.version }}"
       - run: scripts/smoke_elixir_artifact.sh release/distributions/*.tar
       - run: python scripts/write_provenance.py --package elixir --tag "${{ inputs.ref }}" --commit "${{ needs.validate-ref.outputs.commit }}" --artifact-dir release
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: elixir-${{ inputs.ref }}
           path: release/
