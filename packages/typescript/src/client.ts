@@ -1,4 +1,4 @@
-import { ApiError, AuthenticationError, AuthorizationError, RateLimitError, TransportError } from "./errors.js";
+import { ApiError, AuthenticationError, AuthorizationError, ConflictError, NotFoundError, PaymentRequiredError, RateLimitError, TransportError, ValidationError } from "./errors.js";
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export interface ClientOptions {
@@ -131,6 +131,10 @@ async function responseError(response: Response): Promise<ApiError> {
     const retry = Number(response.headers.get("retry-after"));
     return new RateLimitError(...args, Number.isFinite(retry) ? retry : undefined);
   }
+  if (response.status === 402) return new PaymentRequiredError(...args);
+  if (response.status === 404) return new NotFoundError(...args);
+  if (response.status === 409) return new ConflictError(...args);
+  if (response.status === 422) return new ValidationError(...args);
   return new ApiError(...args);
 }
 

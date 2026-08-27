@@ -9,6 +9,7 @@ export interface RealtimeOptions {
   joinPayload?: Record<string, unknown>;
   timeoutMs?: number;
   logger?: (kind: string, message: string, data?: unknown) => void;
+  reconnect?: boolean;
 }
 
 export class Realtime {
@@ -89,6 +90,25 @@ export class Realtime {
   subscribeGroups(groupIds: string[]) { return this.subscribe("group.subscribe", {group_ids: groupIds}); }
   subscribePresence(serviceAgentIds: string[]) { return this.subscribe("presence.subscribe", {service_agent_ids: serviceAgentIds}); }
   subscribeQueue() { return this.subscribe("queue.subscribe", {}); }
+  acknowledgeMessage(messageId: string) { return this.push("message.delivered", {message_id: messageId}); }
+  completeTask(taskId: string, result: unknown = null) { return this.push("task.complete", {task_id: taskId, result}); }
+  failTask(taskId: string, errorMessage: string) { return this.push("task.fail", {task_id: taskId, error_message: errorMessage}); }
+  cancelTask(taskId: string) { return this.push("task.cancel", {task_id: taskId}); }
+  retryTask(taskId: string) { return this.push("task.retry", {task_id: taskId}); }
+  createGroup(group: Record<string, unknown>) { return this.push("group.create", {group}); }
+  listGroups() { return this.push("group.list"); }
+  addGroupMember(groupId: string, serviceAgentId: string, role = "member") { return this.push("group.add_member", {group_id: groupId, service_agent_id: serviceAgentId, role}); }
+  removeGroupMember(groupId: string, serviceAgentId: string) { return this.push("group.remove_member", {group_id: groupId, service_agent_id: serviceAgentId}); }
+  broadcastGroup(groupId: string, message: Record<string, unknown>) { return this.push("group.broadcast", {group_id: groupId, message}); }
+  unsubscribePresence(serviceAgentIds: string[]) { return this.push("presence.unsubscribe", {service_agent_ids: serviceAgentIds}); }
+  reportHealth(metrics: Record<string, unknown>) { return this.push("health.report", {metrics}); }
+  rpcResponse(correlationId: string, result: unknown) { return this.push("rpc.response", {correlation_id: correlationId, result}); }
+  queueStats() { return this.push("queue.stats"); }
+  unsubscribeQueue() { for (const [key, value] of this.subscriptions) if (value[0] === "queue.subscribe") this.subscriptions.delete(key); return this.push("queue.unsubscribe"); }
+  commandAccepted(commandId: string, resultPayload: Record<string, unknown> = {}) { return this.push("command.accepted", {command_id: commandId, result_payload: resultPayload}); }
+  commandProgress(commandId: string, resultPayload: Record<string, unknown>) { return this.push("command.progress", {command_id: commandId, result_payload: resultPayload}); }
+  commandComplete(commandId: string, resultPayload: Record<string, unknown> = {}) { return this.push("command.complete", {command_id: commandId, result_payload: resultPayload}); }
+  commandFail(commandId: string, errorPayload: Record<string, unknown>) { return this.push("command.fail", {command_id: commandId, error_payload: errorPayload}); }
 
   private subscribe(event: string, payload: Record<string, unknown>) {
     this.subscriptions.set(`${event}:${JSON.stringify(payload)}`, [event, payload]);
@@ -96,7 +116,8 @@ export class Realtime {
   }
 
   private scheduleReconnect(): void {
-    if (this.explicitlyClosed || this.reconnectTimer) return;
+    const reconnect = this.options.reconnect ?? Boolean(this.options.tokenProvider);
+    if (!reconnect || this.explicitlyClosed || this.reconnectTimer) return;
     this.socket?.disconnect();
     const schedule = [1_000, 2_000, 5_000, 10_000, 30_000];
     const base = schedule[Math.min(this.reconnectAttempt, schedule.length - 1)]!;

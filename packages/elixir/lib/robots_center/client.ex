@@ -174,6 +174,21 @@ defmodule RobotsCenter.Client do
       429 ->
         struct(RobotsCenter.RateLimitError, fields)
 
+      402 ->
+        struct(
+          RobotsCenter.PaymentRequiredError,
+          Map.take(fields, [:message, :details, :request_id])
+        )
+
+      404 ->
+        struct(RobotsCenter.NotFoundError, Map.take(fields, [:message, :details, :request_id]))
+
+      409 ->
+        struct(RobotsCenter.ConflictError, Map.take(fields, [:message, :details, :request_id]))
+
+      422 ->
+        struct(RobotsCenter.ValidationError, Map.take(fields, [:message, :details, :request_id]))
+
       status ->
         struct(Error, Map.merge(fields, %{status: status, code: body["code"] || body["error"]}))
     end

@@ -1,7 +1,7 @@
 import asyncio
 import os
 
-from robotscenter import AsyncClient
+from robotscenter import AsyncClient, Realtime
 
 
 async def main() -> None:
@@ -17,6 +17,8 @@ async def main() -> None:
                 }
             )
         )
+        async with Realtime(base_url="https://robotscenter.net", token_provider=client.socket_token) as realtime:
+            await realtime.ready({"example": True})
 
 
 asyncio.run(main())

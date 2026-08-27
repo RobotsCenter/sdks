@@ -17,7 +17,8 @@ defmodule RobotsCenter.Realtime do
     :reconnect_timer,
     subscriptions: %{},
     reconnect_attempt: 0,
-    stopping: false
+    stopping: false,
+    reconnect: false
   ]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, {opts, self()}, name: opts[:name])
@@ -42,6 +43,61 @@ defmodule RobotsCenter.Realtime do
 
   def subscribe_queue(server), do: subscribe(server, "queue.subscribe", %{})
 
+  def acknowledge_message(server, id),
+    do: push(server, "message.delivered", %{"message_id" => id})
+
+  def complete_task(server, id, result \\ nil),
+    do: push(server, "task.complete", %{"task_id" => id, "result" => result})
+
+  def fail_task(server, id, message),
+    do: push(server, "task.fail", %{"task_id" => id, "error_message" => message})
+
+  def cancel_task(server, id), do: push(server, "task.cancel", %{"task_id" => id})
+  def retry_task(server, id), do: push(server, "task.retry", %{"task_id" => id})
+  def create_group(server, group), do: push(server, "group.create", %{"group" => group})
+  def list_groups(server), do: push(server, "group.list")
+
+  def add_group_member(server, group_id, agent_id, role \\ "member"),
+    do:
+      push(server, "group.add_member", %{
+        "group_id" => group_id,
+        "service_agent_id" => agent_id,
+        "role" => role
+      })
+
+  def remove_group_member(server, group_id, agent_id),
+    do:
+      push(server, "group.remove_member", %{
+        "group_id" => group_id,
+        "service_agent_id" => agent_id
+      })
+
+  def broadcast_group(server, group_id, message),
+    do: push(server, "group.broadcast", %{"group_id" => group_id, "message" => message})
+
+  def unsubscribe_presence(server, ids),
+    do: push(server, "presence.unsubscribe", %{"service_agent_ids" => ids})
+
+  def report_health(server, metrics), do: push(server, "health.report", %{"metrics" => metrics})
+
+  def rpc_response(server, id, result),
+    do: push(server, "rpc.response", %{"correlation_id" => id, "result" => result})
+
+  def queue_stats(server), do: push(server, "queue.stats")
+  def unsubscribe_queue(server), do: push(server, "queue.unsubscribe")
+
+  def command_accepted(server, id, result \\ %{}),
+    do: push(server, "command.accepted", %{"command_id" => id, "result_payload" => result})
+
+  def command_progress(server, id, result),
+    do: push(server, "command.progress", %{"command_id" => id, "result_payload" => result})
+
+  def command_complete(server, id, result \\ %{}),
+    do: push(server, "command.complete", %{"command_id" => id, "result_payload" => result})
+
+  def command_fail(server, id, error),
+    do: push(server, "command.fail", %{"command_id" => id, "error_payload" => error})
+
   defp subscribe(server, event, payload),
     do: GenServer.call(server, {:subscribe, event, payload}, @default_timeout + 1_000)
 
@@ -58,7 +114,8 @@ defmodule RobotsCenter.Realtime do
       base_url: opts[:base_url] || "https://robotscenter.net",
       token_provider: provider,
       join_payload: opts[:join_payload] || %{},
-      owner: opts[:owner] || caller
+      owner: opts[:owner] || caller,
+      reconnect: Keyword.get(opts, :reconnect, not is_nil(opts[:token_provider]))
     }
 
     send(self(), :connect)
@@ -215,6 +272,7 @@ defmodule RobotsCenter.Realtime do
   end
 
   defp schedule_reconnect(%{stopping: true} = state), do: state
+  defp schedule_reconnect(%{reconnect: false} = state), do: state
 
   defp schedule_reconnect(%{reconnect_timer: nil} = state) do
     timer = Process.send_after(self(), :connect, reconnect_delay(state.reconnect_attempt))

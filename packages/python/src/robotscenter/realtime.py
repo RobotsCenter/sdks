@@ -24,7 +24,7 @@ class Realtime:
         service_agent_id: str | None = None,
         token_provider: Callable[[], Awaitable[Mapping[str, Any]]] | None = None,
         join_payload: Mapping[str, Any] | None = None,
-        reconnect: bool = True,
+        reconnect: bool | None = None,
         max_reconnect_delay: float = 30.0,
     ) -> None:
         if token_provider is None and (socket_token is None or service_agent_id is None):
@@ -36,7 +36,7 @@ class Realtime:
         self.url = ""
         self.topic = ""
         self.join_payload = dict(join_payload or {})
-        self.reconnect = reconnect
+        self.reconnect = token_provider is not None if reconnect is None else reconnect
         self.max_reconnect_delay = max_reconnect_delay
         self._socket: ClientConnection | None = None
         self._ref = 0
@@ -118,6 +118,64 @@ class Realtime:
 
     async def subscribe_queue(self) -> dict[str, Any]:
         return await self._subscribe("queue.subscribe", {})
+
+    async def acknowledge_message(self, message_id: str) -> dict[str, Any]:
+        return await self.push("message.delivered", {"message_id": message_id})
+
+    async def complete_task(self, task_id: str, result: Any = None) -> dict[str, Any]:
+        return await self.push("task.complete", {"task_id": task_id, "result": result})
+
+    async def fail_task(self, task_id: str, error_message: str) -> dict[str, Any]:
+        return await self.push("task.fail", {"task_id": task_id, "error_message": error_message})
+
+    async def cancel_task(self, task_id: str) -> dict[str, Any]:
+        return await self.push("task.cancel", {"task_id": task_id})
+
+    async def retry_task(self, task_id: str) -> dict[str, Any]:
+        return await self.push("task.retry", {"task_id": task_id})
+
+    async def create_group(self, group: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.push("group.create", {"group": dict(group)})
+
+    async def list_groups(self) -> dict[str, Any]:
+        return await self.push("group.list")
+
+    async def add_group_member(self, group_id: str, service_agent_id: str, role: str = "member") -> dict[str, Any]:
+        return await self.push("group.add_member", {"group_id": group_id, "service_agent_id": service_agent_id, "role": role})
+
+    async def remove_group_member(self, group_id: str, service_agent_id: str) -> dict[str, Any]:
+        return await self.push("group.remove_member", {"group_id": group_id, "service_agent_id": service_agent_id})
+
+    async def broadcast_group(self, group_id: str, message: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.push("group.broadcast", {"group_id": group_id, "message": dict(message)})
+
+    async def unsubscribe_presence(self, service_agent_ids: list[str]) -> dict[str, Any]:
+        return await self.push("presence.unsubscribe", {"service_agent_ids": service_agent_ids})
+
+    async def report_health(self, metrics: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.push("health.report", {"metrics": dict(metrics)})
+
+    async def rpc_response(self, correlation_id: str, result: Any) -> dict[str, Any]:
+        return await self.push("rpc.response", {"correlation_id": correlation_id, "result": result})
+
+    async def queue_stats(self) -> dict[str, Any]:
+        return await self.push("queue.stats")
+
+    async def unsubscribe_queue(self) -> dict[str, Any]:
+        self._subscriptions = {k: v for k, v in self._subscriptions.items() if v[0] != "queue.subscribe"}
+        return await self.push("queue.unsubscribe")
+
+    async def command_accepted(self, command_id: str, result_payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return await self.push("command.accepted", {"command_id": command_id, "result_payload": dict(result_payload or {})})
+
+    async def command_progress(self, command_id: str, result_payload: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.push("command.progress", {"command_id": command_id, "result_payload": dict(result_payload)})
+
+    async def command_complete(self, command_id: str, result_payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return await self.push("command.complete", {"command_id": command_id, "result_payload": dict(result_payload or {})})
+
+    async def command_fail(self, command_id: str, error_payload: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.push("command.fail", {"command_id": command_id, "error_payload": dict(error_payload)})
 
     async def events(self) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         while not self._stopping:

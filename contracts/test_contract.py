@@ -35,6 +35,8 @@ class ContractTest(unittest.TestCase):
     def test_protected_operations_declare_scopes(self) -> None:
         for path, operations in self.contract["paths"].items():
             for method, operation in operations.items():
+                if not isinstance(operation, dict):
+                    continue
                 if operation.get("security"):
                     self.assertTrue(operation.get("x-required-scopes"), f"{method} {path}")
 

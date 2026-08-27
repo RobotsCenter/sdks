@@ -36,3 +36,19 @@ defmodule RobotsCenter.RealtimeError do
   @moduledoc "Phoenix transport or channel failure."
   defexception [:message, :details]
 end
+
+defmodule RobotsCenter.PaymentRequiredError do
+  defexception [:message, :details, :request_id]
+end
+
+defmodule RobotsCenter.NotFoundError do
+  defexception [:message, :details, :request_id]
+end
+
+defmodule RobotsCenter.ConflictError do
+  defexception [:message, :details, :request_id]
+end
+
+defmodule RobotsCenter.ValidationError do
+  defexception [:message, :details, :request_id]
+end

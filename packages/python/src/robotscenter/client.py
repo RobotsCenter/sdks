@@ -28,35 +28,34 @@ RETRYABLE_METHODS = {"GET"}
 
 def _error(response: httpx.Response) -> APIError:
     try:
-        body = response.json()
+        decoded = response.json()
+        body = decoded if isinstance(decoded, dict) else {"detail": decoded}
     except ValueError:
         body = {"detail": response.text or response.reason_phrase}
     message = str(body.get("detail") or body.get("message") or body.get("title") or response.reason_phrase)
-    extra = body.get("extra") if isinstance(body.get("extra"), dict) else {}
+    extra_value = body.get("extra")
+    extra: dict[str, Any] = extra_value if isinstance(extra_value, dict) else {}
     code = body.get("code") or body.get("error") or extra.get("code")
-    common = {
-        "message": message,
-        "status": response.status_code,
-        "code": str(code) if code is not None else None,
-        "details": extra.get("errors") or body.get("errors") or body,
-        "request_id": response.headers.get("x-request-id") or body.get("request_id"),
-    }
+    code_text = str(code) if code is not None else None
+    details = extra.get("errors") or body.get("errors") or body
+    request_id_value = response.headers.get("x-request-id") or body.get("request_id")
+    request_id = str(request_id_value) if request_id_value is not None else None
     if response.status_code == 401:
-        return AuthenticationError(**common)
+        return AuthenticationError(message, response.status_code, code_text, details, request_id)
     if response.status_code == 403:
-        return AuthorizationError(**common)
+        return AuthorizationError(message, response.status_code, code_text, details, request_id)
     if response.status_code == 429:
         retry = response.headers.get("retry-after")
-        return RateLimitError(**common, retry_after=_retry_after(retry))
+        return RateLimitError(message, response.status_code, code_text, details, request_id, retry_after=_retry_after(retry))
     if response.status_code == 402:
-        return PaymentRequiredError(**common)
+        return PaymentRequiredError(message, response.status_code, code_text, details, request_id)
     if response.status_code == 404:
-        return NotFoundError(**common)
+        return NotFoundError(message, response.status_code, code_text, details, request_id)
     if response.status_code == 409:
-        return ConflictError(**common)
+        return ConflictError(message, response.status_code, code_text, details, request_id)
     if response.status_code == 422:
-        return ValidationError(**common)
-    return APIError(**common)
+        return ValidationError(message, response.status_code, code_text, details, request_id)
+    return APIError(message, response.status_code, code_text, details, request_id)
 
 
 class _Resources:
