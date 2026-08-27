@@ -6,6 +6,9 @@ updates:
   - package-ecosystem: npm
     directory: /packages/typescript
     schedule: {interval: weekly}
+    ignore:
+      - dependency-name: typescript
+        versions: [">=7.0.0"]
   - package-ecosystem: mix
     directory: /packages/elixir
     schedule: {interval: weekly}
