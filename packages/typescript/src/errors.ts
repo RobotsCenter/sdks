@@ -8,6 +8,7 @@ export class TransportError extends RobotsCenterError {
 
 export class RealtimeError extends RobotsCenterError {
   override readonly name = "RealtimeError";
+  constructor(message: string, readonly terminal = false) { super(message); }
 }
 
 export class ApiError extends RobotsCenterError {

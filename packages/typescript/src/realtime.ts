@@ -24,6 +24,7 @@ export class Realtime {
   private readonly subscriptions = new Map<string, [string, Record<string, unknown>]>();
   private readonly handlers = new Map<number, [string, (payload: Record<string, unknown>) => void]>();
   private nextHandlerRef = 1;
+  private joining = false;
 
   constructor(options: RealtimeOptions) {
     if (!options.tokenProvider && options.reconnect === true) throw new RealtimeError("reconnect requires tokenProvider so expired socket tokens are never reused");
@@ -48,17 +49,21 @@ export class Realtime {
       ...(this.options.logger ? {logger: this.options.logger} : {}),
     };
     this.socket = new Socket(`${base}/socket`, socketOptions);
-    this.socket.onClose(() => this.scheduleReconnect());
-    this.socket.onError(() => this.scheduleReconnect());
+    this.socket.onClose(() => { if (!this.joining) this.scheduleReconnect(); });
+    this.socket.onError(() => { if (!this.joining) this.scheduleReconnect(); });
     this.channel = this.socket.channel(`agent:${serviceAgentId}`, this.options.joinPayload ?? {});
     this.assertFrameSize("phx_join", this.options.joinPayload ?? {}, `agent:${serviceAgentId}`);
     this.socket.connect();
     let response: Record<string, unknown>;
+    this.joining = true;
     try {
       response = await pushPromise(this.channel.join(this.timeoutMs), "channel join");
     } catch (error) {
-      this.scheduleReconnect();
+      if (error instanceof RealtimeError && error.terminal) this.explicitlyClosed = true;
+      else this.scheduleReconnect();
       throw error;
+    } finally {
+      this.joining = false;
     }
     this.reconnectAttempt = 0;
     for (const [, [event, handler]] of this.handlers) this.channel.on(event, handler);
@@ -119,7 +124,20 @@ export class Realtime {
   addGroupMember(groupId: string, serviceAgentId: string, role = "member") { return this.push("group.add_member", {group_id: groupId, service_agent_id: serviceAgentId, role}); }
   removeGroupMember(groupId: string, serviceAgentId: string) { return this.push("group.remove_member", {group_id: groupId, service_agent_id: serviceAgentId}); }
   broadcastGroup(groupId: string, message: Record<string, unknown>) { return this.push("group.broadcast", {group_id: groupId, message}); }
-  async unsubscribePresence(serviceAgentIds: string[]) { const result = await this.push("presence.unsubscribe", {service_agent_ids: serviceAgentIds}); for (const [key, value] of this.subscriptions) if (value[0] === "presence.subscribe") this.subscriptions.delete(key); return result; }
+  async unsubscribePresence(serviceAgentIds: string[]) {
+    const result = await this.push("presence.unsubscribe", {service_agent_ids: serviceAgentIds});
+    const removed = new Set(serviceAgentIds);
+    for (const [key, [event, payload]] of this.subscriptions) {
+      if (event !== "presence.subscribe") continue;
+      this.subscriptions.delete(key);
+      const remaining = ((payload.service_agent_ids as string[] | undefined) ?? []).filter((id) => !removed.has(id));
+      if (remaining.length) {
+        const next = {service_agent_ids: remaining};
+        this.subscriptions.set(`${event}:${JSON.stringify(next)}`, [event, next]);
+      }
+    }
+    return result;
+  }
   reportHealth(metrics: Record<string, unknown>) { return this.push("health.report", {metrics}); }
   rpcResponse(correlationId: string, result: unknown) { return this.push("rpc.response", {correlation_id: correlationId, result}); }
   queueStats() { return this.push("queue.stats"); }
@@ -157,7 +175,13 @@ export class Realtime {
 function pushPromise(push: ReturnType<Channel["push"]>, operation: string): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     push.receive("ok", (response) => resolve(response as Record<string, unknown>));
-    push.receive("error", (response) => reject(new RealtimeError(`${operation} failed: ${JSON.stringify(response)}`)));
+    push.receive("error", (response) => reject(new RealtimeError(`${operation} failed: ${JSON.stringify(response)}`, isTerminal(response))));
     push.receive("timeout", () => reject(new RealtimeError(`${operation} timed out`)));
   });
+}
+
+function isTerminal(value: unknown): boolean {
+  if (typeof value === "string") return ["unauthorized", "workspace_frozen", "workspace_paused", "workspace_archived", "workspace_unavailable"].includes(value);
+  if (!value || typeof value !== "object") return false;
+  return Object.values(value as Record<string, unknown>).some(isTerminal);
 }

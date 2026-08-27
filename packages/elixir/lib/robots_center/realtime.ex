@@ -188,10 +188,7 @@ defmodule RobotsCenter.Realtime do
   def handle_call({:unsubscribe, subscription_event, event, payload}, _from, state) do
     case checked_push(state.channel, event, payload, @default_timeout) do
       {:ok, response} ->
-        subscriptions =
-          Map.reject(state.subscriptions, fn {_key, {name, _payload}} ->
-            name == subscription_event
-          end)
+        subscriptions = remove_subscription(state.subscriptions, subscription_event, payload)
 
         {:reply, {:ok, response}, %{state | subscriptions: subscriptions}}
 
@@ -212,12 +209,23 @@ defmodule RobotsCenter.Realtime do
 
       {:error, reason} ->
         send(state.owner, {:robots_center_realtime, {:error, reason}})
-        {:noreply, schedule_reconnect(state)}
+
+        if terminal_reason?(reason),
+          do: {:noreply, %{state | stopping: true}},
+          else: {:noreply, schedule_reconnect(state)}
     end
   end
 
   def handle_info(:heartbeat, %{channel: channel, stopping: false} = state)
       when is_pid(channel) do
+    if state.socket,
+      do:
+        PhoenixClient.Socket.push(state.socket, %Message{
+          topic: "phoenix",
+          event: "heartbeat",
+          payload: %{}
+        })
+
     PhoenixClient.Channel.push_async(channel, "agent.heartbeat", %{})
 
     {:noreply,
@@ -271,18 +279,23 @@ defmodule RobotsCenter.Realtime do
 
   defp connect_channel(state, token, socket) do
     result =
-      with :ok <- await_connected(socket, 100),
+      with :ok <- check_join_frame("agent:#{token.service_agent_id}", state.join_payload),
+           :ok <- await_connected(socket, 100),
            {:ok, _reply, channel} <-
              PhoenixClient.Channel.join(
                socket,
                "agent:#{token.service_agent_id}",
                state.join_payload
              ) do
-        Enum.each(state.subscriptions, fn {_key, {event, payload}} ->
-          PhoenixClient.Channel.push_async(channel, event, payload)
-        end)
+        replay =
+          Enum.reduce_while(state.subscriptions, :ok, fn {_key, {event, payload}}, :ok ->
+            case checked_push(channel, event, payload, @default_timeout) do
+              {:ok, _} -> {:cont, :ok}
+              error -> {:halt, error}
+            end
+          end)
 
-        {:ok, %{state | socket: socket, channel: channel}}
+        if replay == :ok, do: {:ok, %{state | socket: socket, channel: channel}}, else: replay
       end
 
     if match?({:error, _}, result) and Process.alive?(socket),
@@ -330,6 +343,43 @@ defmodule RobotsCenter.Realtime do
       do: {:error, %RealtimeError{message: "Phoenix frame exceeds the 64 KiB payload limit"}},
       else: channel_push(channel, event, payload, timeout)
   end
+
+  defp check_join_frame(topic, payload) do
+    if byte_size(Jason.encode!([nil, nil, topic, "phx_join", payload])) > 65_536,
+      do: {:error, :payload_too_large},
+      else: :ok
+  end
+
+  defp terminal_reason?(reason) do
+    text = inspect(reason)
+
+    Enum.any?(
+      ~w(unauthorized workspace_frozen workspace_paused workspace_archived workspace_unavailable),
+      &String.contains?(text, &1)
+    )
+  end
+
+  defp remove_subscription(subscriptions, "presence.subscribe", %{"service_agent_ids" => removed}) do
+    Enum.reduce(subscriptions, %{}, fn {key, {event, payload}}, acc ->
+      if event == "presence.subscribe" do
+        remaining = Enum.reject(payload["service_agent_ids"] || [], &(&1 in removed))
+
+        if remaining == [],
+          do: acc,
+          else:
+            Map.put(
+              acc,
+              {event, :erlang.phash2(remaining)},
+              {event, Map.put(payload, "service_agent_ids", remaining)}
+            )
+      else
+        Map.put(acc, key, {event, payload})
+      end
+    end)
+  end
+
+  defp remove_subscription(subscriptions, event, _payload),
+    do: Map.reject(subscriptions, fn {_key, {name, _payload}} -> name == event end)
 
   defp await_connected(_socket, 0), do: {:error, :connect_timeout}
 
