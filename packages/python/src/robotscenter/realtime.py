@@ -37,6 +37,8 @@ class Realtime:
     ) -> None:
         if token_provider is None and (socket_token is None or service_agent_id is None):
             raise ValueError("provide token_provider or both socket_token and service_agent_id")
+        if token_provider is None and reconnect is True:
+            raise ValueError("reconnect requires token_provider so expired socket tokens are never reused")
         self.base_url = base_url
         self.socket_token = socket_token
         self.service_agent_id = service_agent_id
@@ -69,7 +71,10 @@ class Realtime:
         self._stopping = False
         self._terminal = False
         async with self._connect_lock:
-            await self._open()
+            try:
+                await self._open()
+            except Exception as exc:
+                raise RealtimeError(f"connection failed: {exc}") from exc
             if self._reader is None or self._reader.done():
                 self._reader = asyncio.create_task(self._reader_loop())
             if self._heartbeat_task is None or self._heartbeat_task.done():
@@ -143,16 +148,18 @@ class Realtime:
         return await self.push("agent.ready", dict(metadata or {}))
 
     async def disconnect(self) -> dict[str, Any]:
-        return await self.push("disconnect")
+        await self._send("disconnect", {})
+        await self.close()
+        return {"status": "disconnected"}
 
     async def acknowledge_message(self, message_id: str) -> dict[str, Any]:
         return await self.push("message.delivered", {"message_id": message_id})
 
-    async def complete_task(self, task_id: str, result: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        return await self.push("task.complete", {"task_id": task_id, "result": dict(result or {})})
+    async def complete_task(self, task_id: str, result: Mapping[str, Any] | None = None, retry_count: int = 0) -> dict[str, Any]:
+        return await self.push("task.complete", {"task_id": task_id, "result": dict(result or {}), "retry_count": retry_count})
 
-    async def fail_task(self, task_id: str, error_message: str) -> dict[str, Any]:
-        return await self.push("task.fail", {"task_id": task_id, "error_message": error_message})
+    async def fail_task(self, task_id: str, error_message: str, retry_count: int = 0) -> dict[str, Any]:
+        return await self.push("task.fail", {"task_id": task_id, "error_message": error_message, "retry_count": retry_count})
 
     async def cancel_task(self, task_id: str) -> dict[str, Any]:
         return await self.push("task.cancel", {"task_id": task_id})
@@ -211,11 +218,11 @@ class Realtime:
     async def command_progress(self, command_id: str, result_payload: Mapping[str, Any]) -> dict[str, Any]:
         return await self.push("command.progress", {"command_id": command_id, "result_payload": dict(result_payload)})
 
-    async def command_complete(self, command_id: str, result_payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        return await self.push("command.complete", {"command_id": command_id, "result_payload": dict(result_payload or {})})
+    async def command_complete(self, command_id: str, result_payload: Mapping[str, Any] | None = None, status: str = "succeeded") -> dict[str, Any]:
+        return await self.push("command.complete", {"command_id": command_id, "result_payload": dict(result_payload or {}), "status": status})
 
-    async def command_fail(self, command_id: str, error_payload: Mapping[str, Any]) -> dict[str, Any]:
-        return await self.push("command.fail", {"command_id": command_id, "error_payload": dict(error_payload)})
+    async def command_fail(self, command_id: str, error_payload: Mapping[str, Any], status: str = "failed") -> dict[str, Any]:
+        return await self.push("command.fail", {"command_id": command_id, "error_payload": dict(error_payload), "status": status})
 
     async def events(self) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         while not self._stopping:
@@ -292,7 +299,7 @@ class Realtime:
                     async with self._connect_lock:
                         await self._open()
                     await self._events.put(("reconnected", {}))
-                except (OSError, RealtimeError) as reconnect_error:
+                except Exception as reconnect_error:  # noqa: BLE001 - token providers are user callbacks
                     if self._terminal:
                         await self._events.put(("error", {"reason": str(reconnect_error)}))
                         return

@@ -114,13 +114,13 @@ class _Resources:
         return self._client.request("POST", "/api/v1/tasks", json=dict(task))
 
     def task(self, task_id: str) -> Json:
-        return self._client.request("GET", f"/api/v1/tasks/{task_id}")
+        return self._client.request("GET", f"/api/v1/tasks/{_id(task_id)}")
 
     def cancel_task(self, task_id: str) -> Json:
-        return self._client.request("POST", f"/api/v1/tasks/{task_id}/cancel")
+        return self._client.request("POST", f"/api/v1/tasks/{_id(task_id)}/cancel")
 
     def retry_task(self, task_id: str) -> Json:
-        return self._client.request("POST", f"/api/v1/tasks/{task_id}/retry")
+        return self._client.request("POST", f"/api/v1/tasks/{_id(task_id)}/retry")
 
     def groups(self) -> Json:
         return self._client.request("GET", "/api/v1/groups")
@@ -129,22 +129,22 @@ class _Resources:
         return self._client.request("POST", "/api/v1/groups", json=dict(group))
 
     def group(self, group_id: str) -> Json:
-        return self._client.request("GET", f"/api/v1/groups/{group_id}")
+        return self._client.request("GET", f"/api/v1/groups/{_id(group_id)}")
 
     def update_group(self, group_id: str, group: Mapping[str, Any]) -> Json:
-        return self._client.request("PATCH", f"/api/v1/groups/{group_id}", json=dict(group))
+        return self._client.request("PATCH", f"/api/v1/groups/{_id(group_id)}", json=dict(group))
 
     def delete_group(self, group_id: str) -> Json:
-        return self._client.request("DELETE", f"/api/v1/groups/{group_id}")
+        return self._client.request("DELETE", f"/api/v1/groups/{_id(group_id)}")
 
     def add_group_member(self, group_id: str, member: Mapping[str, Any]) -> Json:
         return self._client.request(
-            "POST", f"/api/v1/groups/{group_id}/members", json=dict(member)
+            "POST", f"/api/v1/groups/{_id(group_id)}/members", json=dict(member)
         )
 
     def remove_group_member(self, group_id: str, service_agent_id: str) -> Json:
         return self._client.request(
-            "DELETE", f"/api/v1/groups/{group_id}/members/{service_agent_id}"
+            "DELETE", f"/api/v1/groups/{_id(group_id)}/members/{_id(service_agent_id)}"
         )
 
     def broadcast_group(self, group_id: str, message: Mapping[str, Any], *, exclude_sender: bool = True) -> Json:
@@ -161,7 +161,7 @@ class _Resources:
         return self._client.request("POST", "/api/v1/health_reports", json=dict(report))
 
     def agent_health(self, agent_id: str) -> Json:
-        return self._client.request("GET", f"/api/v1/agents/{agent_id}/health")
+        return self._client.request("GET", f"/api/v1/agents/{_id(agent_id)}/health")
 
     def queue(self) -> Json:
         return self._client.request("GET", "/api/v1/queue")
@@ -250,7 +250,7 @@ class AsyncRobotsCenterClient:
         return await self.request("GET", "/api/v1/agents", params=params)
 
     async def agent(self, agent_id: str) -> Json:
-        return await self.request("GET", f"/api/v1/agents/{agent_id}")
+        return await self.request("GET", f"/api/v1/agents/{_id(agent_id)}")
 
     async def me(self) -> Json:
         return await self.request("GET", "/api/v1/agents/me")
@@ -274,7 +274,7 @@ class AsyncRobotsCenterClient:
         return await self.request("GET", "/api/v1/messages", params=params)
 
     async def message(self, message_id: str) -> Json:
-        return await self.request("GET", f"/api/v1/messages/{message_id}")
+        return await self.request("GET", f"/api/v1/messages/{_id(message_id)}")
 
     async def send_message(self, message: Mapping[str, Any]) -> Json:
         body = dict(message)
@@ -288,13 +288,13 @@ class AsyncRobotsCenterClient:
         return await self.request("POST", "/api/v1/tasks", json=dict(task))
 
     async def task(self, task_id: str) -> Json:
-        return await self.request("GET", f"/api/v1/tasks/{task_id}")
+        return await self.request("GET", f"/api/v1/tasks/{_id(task_id)}")
 
     async def cancel_task(self, task_id: str) -> Json:
-        return await self.request("POST", f"/api/v1/tasks/{task_id}/cancel")
+        return await self.request("POST", f"/api/v1/tasks/{_id(task_id)}/cancel")
 
     async def retry_task(self, task_id: str) -> Json:
-        return await self.request("POST", f"/api/v1/tasks/{task_id}/retry")
+        return await self.request("POST", f"/api/v1/tasks/{_id(task_id)}/retry")
 
     async def groups(self) -> Json:
         return await self.request("GET", "/api/v1/groups")
@@ -303,19 +303,19 @@ class AsyncRobotsCenterClient:
         return await self.request("POST", "/api/v1/groups", json=dict(group))
 
     async def group(self, group_id: str) -> Json:
-        return await self.request("GET", f"/api/v1/groups/{group_id}")
+        return await self.request("GET", f"/api/v1/groups/{_id(group_id)}")
 
     async def update_group(self, group_id: str, group: Mapping[str, Any]) -> Json:
-        return await self.request("PATCH", f"/api/v1/groups/{group_id}", json=dict(group))
+        return await self.request("PATCH", f"/api/v1/groups/{_id(group_id)}", json=dict(group))
 
     async def delete_group(self, group_id: str) -> Json:
-        return await self.request("DELETE", f"/api/v1/groups/{group_id}")
+        return await self.request("DELETE", f"/api/v1/groups/{_id(group_id)}")
 
     async def add_group_member(self, group_id: str, member: Mapping[str, Any]) -> Json:
-        return await self.request("POST", f"/api/v1/groups/{group_id}/members", json=dict(member))
+        return await self.request("POST", f"/api/v1/groups/{_id(group_id)}/members", json=dict(member))
 
     async def remove_group_member(self, group_id: str, service_agent_id: str) -> Json:
-        return await self.request("DELETE", f"/api/v1/groups/{group_id}/members/{service_agent_id}")
+        return await self.request("DELETE", f"/api/v1/groups/{_id(group_id)}/members/{_id(service_agent_id)}")
 
     async def broadcast_group(self, group_id: str, message: Mapping[str, Any], *, exclude_sender: bool = True) -> Json:
         return await self.request("POST", f"/api/v1/groups/{_id(group_id)}/messages", json={"message": dict(message), "exclude_sender": exclude_sender})
@@ -329,7 +329,7 @@ class AsyncRobotsCenterClient:
         return await self.request("POST", "/api/v1/health_reports", json=dict(report))
 
     async def agent_health(self, agent_id: str) -> Json:
-        return await self.request("GET", f"/api/v1/agents/{agent_id}/health")
+        return await self.request("GET", f"/api/v1/agents/{_id(agent_id)}/health")
 
     async def queue(self) -> Json:
         return await self.request("GET", "/api/v1/queue")

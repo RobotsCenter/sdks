@@ -61,8 +61,12 @@ defmodule RobotsCenter.Client do
   def create_credential(client, credential),
     do: request(client, :post, "/api/v1/agents/me/credentials", json: credential)
 
-  def exchange_agent_token(client, api_key),
-    do: request(client, :post, "/api/v1/agent_tokens", json: %{api_key: api_key})
+  def exchange_agent_token(client, api_key, scopes \\ nil),
+    do:
+      request(client, :post, "/api/v1/agent_tokens",
+        json:
+          Map.reject(%{api_key: api_key, scopes: scopes}, fn {_key, value} -> is_nil(value) end)
+      )
 
   def register(client, registration),
     do: request(client, :post, "/api/v1/register", json: registration)
@@ -107,10 +111,10 @@ defmodule RobotsCenter.Client do
   def remove_group_member(client, id, agent_id),
     do: request(client, :delete, "/api/v1/groups/#{encode(id)}/members/#{encode(agent_id)}")
 
-  def broadcast_group(client, id, message),
+  def broadcast_group(client, id, message, exclude_sender \\ true),
     do:
       request(client, :post, "/api/v1/groups/#{encode(id)}/messages",
-        json: %{"message" => message}
+        json: %{"message" => message, "exclude_sender" => exclude_sender}
       )
 
   def presence(client, ids),
@@ -151,11 +155,15 @@ defmodule RobotsCenter.Client do
     body =
       if is_map(response.body), do: response.body, else: %{"detail" => inspect(response.body)}
 
+    extra = if is_map(body["extra"]), do: body["extra"], else: %{}
+    code = body["code"] || body["error"] || extra["code"] || body["type"]
+
     fields = %{
       message: body["detail"] || body["message"] || body["title"] || "HTTP #{response.status}",
       details: body,
-      request_id: header(response.headers, "x-request-id"),
-      retry_after: parse_integer(header(response.headers, "retry-after"))
+      request_id:
+        header(response.headers, "x-request-id") || body["request_id"] || extra["request_id"],
+      retry_after: retry_after(header(response.headers, "retry-after") || extra["retry_after"])
     }
 
     case response.status do
@@ -172,10 +180,14 @@ defmodule RobotsCenter.Client do
         )
 
       429 ->
-        if body["code"] in ["quota_exceeded", "workspace_quota_exceeded"],
-          do:
-            struct(RobotsCenter.QuotaError, Map.take(fields, [:message, :details, :request_id])),
-          else: struct(RobotsCenter.RateLimitError, fields)
+        if code in [
+             "quota_exceeded",
+             "workspace_quota_exceeded",
+             "urn:robots-center:problem:quota-exceeded"
+           ],
+           do:
+             struct(RobotsCenter.QuotaError, Map.take(fields, [:message, :details, :request_id])),
+           else: struct(RobotsCenter.RateLimitError, fields)
 
       402 ->
         struct(
@@ -193,7 +205,7 @@ defmodule RobotsCenter.Client do
         struct(RobotsCenter.ValidationError, Map.take(fields, [:message, :details, :request_id]))
 
       status ->
-        struct(Error, Map.merge(fields, %{status: status, code: body["code"] || body["error"]}))
+        struct(Error, Map.merge(fields, %{status: status, code: code}))
     end
   end
 
@@ -213,6 +225,26 @@ defmodule RobotsCenter.Client do
     case Integer.parse(to_string(value)) do
       {number, ""} -> number
       _ -> nil
+    end
+  end
+
+  defp retry_after(nil), do: nil
+  defp retry_after(value) when is_integer(value), do: value
+
+  defp retry_after(value) do
+    case Integer.parse(to_string(value)) do
+      {seconds, ""} ->
+        seconds
+
+      _ ->
+        try do
+          datetime = :httpd_util.convert_request_date(String.to_charlist(value))
+          target = :calendar.datetime_to_gregorian_seconds(datetime)
+          now = :calendar.datetime_to_gregorian_seconds(:calendar.universal_time())
+          max(target - now, 0)
+        rescue
+          _ -> nil
+        end
     end
   end
 

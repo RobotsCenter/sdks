@@ -46,11 +46,21 @@ defmodule RobotsCenter.Realtime do
   def acknowledge_message(server, id),
     do: push(server, "message.delivered", %{"message_id" => id})
 
-  def complete_task(server, id, result \\ %{}),
-    do: push(server, "task.complete", %{"task_id" => id, "result" => result})
+  def complete_task(server, id, result \\ %{}, retry_count \\ 0),
+    do:
+      push(server, "task.complete", %{
+        "task_id" => id,
+        "result" => result,
+        "retry_count" => retry_count
+      })
 
-  def fail_task(server, id, message),
-    do: push(server, "task.fail", %{"task_id" => id, "error_message" => message})
+  def fail_task(server, id, message, retry_count \\ 0),
+    do:
+      push(server, "task.fail", %{
+        "task_id" => id,
+        "error_message" => message,
+        "retry_count" => retry_count
+      })
 
   def cancel_task(server, id), do: push(server, "task.cancel", %{"task_id" => id})
   def retry_task(server, id), do: push(server, "task.retry", %{"task_id" => id})
@@ -105,17 +115,34 @@ defmodule RobotsCenter.Realtime do
   def command_progress(server, id, result),
     do: push(server, "command.progress", %{"command_id" => id, "result_payload" => result})
 
-  def command_complete(server, id, result \\ %{}),
-    do: push(server, "command.complete", %{"command_id" => id, "result_payload" => result})
+  def command_complete(server, id, result \\ %{}, status \\ "succeeded"),
+    do:
+      push(server, "command.complete", %{
+        "command_id" => id,
+        "result_payload" => result,
+        "status" => status
+      })
 
-  def command_fail(server, id, error),
-    do: push(server, "command.fail", %{"command_id" => id, "error_payload" => error})
+  def command_fail(server, id, error, status \\ "failed"),
+    do:
+      push(server, "command.fail", %{
+        "command_id" => id,
+        "error_payload" => error,
+        "status" => status
+      })
 
   defp subscribe(server, event, payload),
     do: GenServer.call(server, {:subscribe, event, payload}, @default_timeout + 1_000)
 
   @impl true
   def init({opts, caller}) do
+    if is_nil(opts[:token_provider]) and opts[:reconnect] == true,
+      do:
+        raise(
+          ArgumentError,
+          "reconnect requires token_provider so expired socket tokens are never reused"
+        )
+
     provider =
       opts[:token_provider] ||
         static_provider(
