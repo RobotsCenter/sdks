@@ -34,6 +34,8 @@ class Realtime:
         join_payload: Mapping[str, Any] | None = None,
         reconnect: bool | None = None,
         max_reconnect_delay: float = 30.0,
+        heartbeat_interval: float = 20.0,
+        reply_timeout: float = 10.0,
     ) -> None:
         if token_provider is None and (socket_token is None or service_agent_id is None):
             raise ValueError("provide token_provider or both socket_token and service_agent_id")
@@ -48,6 +50,8 @@ class Realtime:
         self.join_payload = dict(join_payload or {})
         self.reconnect = token_provider is not None if reconnect is None else reconnect
         self.max_reconnect_delay = max_reconnect_delay
+        self.heartbeat_interval = heartbeat_interval
+        self.reply_timeout = reply_timeout
         self._socket: ClientConnection | None = None
         self._ref = 0
         self._join_ref: str | None = None
@@ -81,20 +85,7 @@ class Realtime:
                 self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def close(self) -> None:
-        self._stopping = True
-        self._terminal = True
-        if self._reader is not None:
-            self._reader.cancel()
-            self._reader = None
-        if self._heartbeat_task is not None:
-            self._heartbeat_task.cancel()
-            self._heartbeat_task = None
-        if self._socket is not None:
-            try:
-                await self._send("phx_leave", {})
-            finally:
-                await self._socket.close()
-                self._socket = None
+        await self._shutdown(send_leave=True)
 
     async def push(self, event: str, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
         if self._socket is None:
@@ -104,7 +95,7 @@ class Realtime:
         self._pending[ref] = future
         await self._send(event, dict(payload or {}), ref=ref)
         try:
-            response = await asyncio.wait_for(future, timeout=10.0)
+            response = await asyncio.wait_for(future, timeout=self.reply_timeout)
         finally:
             self._pending.pop(ref, None)
         if response.get("status") != "ok":
@@ -148,8 +139,12 @@ class Realtime:
         return await self.push("agent.ready", dict(metadata or {}))
 
     async def disconnect(self) -> dict[str, Any]:
-        await self._send("disconnect", {})
-        await self.close()
+        if self._socket is not None:
+            try:
+                await self._send("disconnect", {})
+            except (OSError, websockets.ConnectionClosed, RealtimeError):
+                pass
+        await self._shutdown(send_leave=False)
         return {"status": "disconnected"}
 
     async def acknowledge_message(self, message_id: str) -> dict[str, Any]:
@@ -229,27 +224,56 @@ class Realtime:
             yield await self._events.get()
 
     async def _open(self) -> None:
-        if self.token_provider is not None:
-            token = await self.token_provider()
-            self.socket_token = str(token["socket_token"])
-            self.service_agent_id = str(token["service_agent_id"])
-        assert self.socket_token is not None
-        assert self.service_agent_id is not None
-        self.url = _socket_url(self.base_url, self.socket_token)
-        self.topic = f"agent:{self.service_agent_id}"
-        self._socket = await websockets.connect(self.url, ping_interval=None, max_size=65_536)
-        self._join_ref = self._next_ref()
-        await self._send("phx_join", self.join_payload, ref=self._join_ref)
-        reply = await self._receive()
-        if reply[3] != "phx_reply" or reply[4].get("status") != "ok":
-            response = reply[4].get("response", {})
-            reason = response.get("reason") if isinstance(response, dict) else None
-            self._terminal = reason in TERMINAL_REASONS
-            await self._socket.close()
+        socket: ClientConnection | None = None
+        try:
+            if self.token_provider is not None:
+                token = await self.token_provider()
+                socket_token = token.get("socket_token")
+                service_agent_id = token.get("service_agent_id")
+                if not isinstance(socket_token, str) or not socket_token:
+                    raise RealtimeError("token_provider returned an invalid socket_token")
+                if not isinstance(service_agent_id, str) or not service_agent_id:
+                    raise RealtimeError("token_provider returned an invalid service_agent_id")
+                self.socket_token = socket_token
+                self.service_agent_id = service_agent_id
+            assert self.socket_token is not None
+            assert self.service_agent_id is not None
+            self.url = _socket_url(self.base_url, self.socket_token)
+            self.topic = f"agent:{self.service_agent_id}"
+            socket = await websockets.connect(self.url, ping_interval=None, max_size=65_536)
+            self._socket = socket
+            self._join_ref = self._next_ref()
+            await self._send("phx_join", self.join_payload, ref=self._join_ref)
+            reply = await self._receive()
+            self._validate_reply(reply, "phx_join")
+            for event, payload in self._subscriptions.values():
+                await self._direct_push(event, payload)
+        except BaseException:
+            if socket is not None:
+                await socket.close()
             self._socket = None
-            raise RealtimeError(f"channel join failed: {reply[4]}")
-        for event, payload in self._subscriptions.values():
-            await self._send(event, payload)
+            self._join_ref = None
+            raise
+
+    async def _direct_push(self, event: str, payload: dict[str, Any]) -> dict[str, Any]:
+        ref = self._next_ref()
+        await self._send(event, payload, ref=ref)
+        while True:
+            reply = await asyncio.wait_for(self._receive(), timeout=self.reply_timeout)
+            if reply[3] == "phx_reply" and reply[1] == ref:
+                return self._validate_reply(reply, event)
+            await self._queue_frame(reply)
+
+    def _validate_reply(self, reply: list[Any], operation: str) -> dict[str, Any]:
+        if reply[3] != "phx_reply" or not isinstance(reply[4], dict):
+            raise RealtimeError(f"{operation} received an invalid reply")
+        payload = reply[4]
+        if payload.get("status") != "ok":
+            response = payload.get("response", {})
+            self._terminal = _terminal_reason(response) is not None
+            raise RealtimeError(f"{operation} failed: {response}")
+        response = payload.get("response", {})
+        return response if isinstance(response, dict) else {"value": response}
 
     async def _subscribe(self, event: str, payload: dict[str, Any]) -> dict[str, Any]:
         key = (event, json.dumps(payload, sort_keys=True))
@@ -259,7 +283,7 @@ class Realtime:
 
     async def _heartbeat_loop(self) -> None:
         while not self._stopping:
-            await asyncio.sleep(20)
+            await asyncio.sleep(self.heartbeat_interval)
             if self._socket is not None:
                 try:
                     await self.heartbeat()
@@ -273,17 +297,9 @@ class Realtime:
             try:
                 message = await self._receive()
                 attempt = 0
-                event = message[3]
-                payload = message[4] if isinstance(message[4], dict) else {"value": message[4]}
-                ref = message[1]
-                if event == "phx_reply" and ref in self._pending:
-                    future = self._pending[ref]
-                    if not future.done():
-                        future.set_result(payload)
-                elif event not in {"phx_reply", "phx_close"}:
-                    await self._events.put((event, payload))
+                await self._queue_frame(message)
             except (OSError, websockets.ConnectionClosed, RealtimeError) as exc:
-                self._socket = None
+                await self._close_socket()
                 for future in self._pending.values():
                     if not future.done():
                         future.set_exception(RealtimeError(str(exc)))
@@ -305,13 +321,60 @@ class Realtime:
                         return
                     continue
 
+    async def _queue_frame(self, message: list[Any]) -> None:
+        event = message[3]
+        payload = message[4] if isinstance(message[4], dict) else {"value": message[4]}
+        if event in {"phx_close", "phx_error"}:
+            reason = _terminal_reason(payload)
+            self._terminal = reason is not None
+            raise RealtimeError(reason or event)
+        ref = message[1]
+        if event == "phx_reply" and ref in self._pending:
+            future = self._pending[ref]
+            if not future.done():
+                future.set_result(payload)
+        elif event != "phx_reply":
+            await self._events.put((event, payload))
+
+    async def _shutdown(self, *, send_leave: bool) -> None:
+        self._stopping = True
+        self._terminal = True
+        current = asyncio.current_task()
+        tasks = [task for task in (self._reader, self._heartbeat_task) if task and task is not current]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._reader = None
+        self._heartbeat_task = None
+        if send_leave and self._socket is not None:
+            try:
+                await self._send("phx_leave", {})
+            except (OSError, websockets.ConnectionClosed, RealtimeError):
+                pass
+        await self._close_socket()
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(RealtimeError("realtime connection closed"))
+        self._pending.clear()
+
+    async def _close_socket(self) -> None:
+        socket, self._socket = self._socket, None
+        self._join_ref = None
+        if socket is not None:
+            await socket.close()
+
     async def _send(self, event: str, payload: dict[str, Any], *, ref: str | None = None) -> None:
         if self._socket is None:
             raise RealtimeError("realtime connection is not open")
+        frame = self._frame(event, payload, ref=ref)
+        await self._socket.send(frame)
+
+    def _frame(self, event: str, payload: dict[str, Any], *, ref: str | None = None) -> str:
         frame = json.dumps([self._join_ref, ref or self._next_ref(), self.topic, event, payload])
         if len(frame.encode()) > 65_536:
             raise RealtimeError("Phoenix frame exceeds the 64 KiB payload limit")
-        await self._socket.send(frame)
+        return frame
 
     async def _receive(self) -> list[Any]:
         if self._socket is None:
@@ -335,3 +398,19 @@ def _socket_url(base_url: str, socket_token: str) -> str:
     path = parsed.path.rstrip("/") + "/socket/websocket"
     query = urlencode({"vsn": "2.0.0", "socket_token": socket_token})
     return urlunparse((scheme, parsed.netloc, path, "", query, ""))
+
+
+def _terminal_reason(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value if value in TERMINAL_REASONS else None
+    if isinstance(value, Mapping):
+        for item in value.values():
+            reason = _terminal_reason(item)
+            if reason is not None:
+                return reason
+    if isinstance(value, list):
+        for item in value:
+            reason = _terminal_reason(item)
+            if reason is not None:
+                return reason
+    return None
