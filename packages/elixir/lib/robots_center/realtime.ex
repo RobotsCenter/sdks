@@ -46,7 +46,7 @@ defmodule RobotsCenter.Realtime do
   def acknowledge_message(server, id),
     do: push(server, "message.delivered", %{"message_id" => id})
 
-  def complete_task(server, id, result \\ nil),
+  def complete_task(server, id, result \\ %{}),
     do: push(server, "task.complete", %{"task_id" => id, "result" => result})
 
   def fail_task(server, id, message),
@@ -76,7 +76,13 @@ defmodule RobotsCenter.Realtime do
     do: push(server, "group.broadcast", %{"group_id" => group_id, "message" => message})
 
   def unsubscribe_presence(server, ids),
-    do: push(server, "presence.unsubscribe", %{"service_agent_ids" => ids})
+    do:
+      GenServer.call(
+        server,
+        {:unsubscribe, "presence.subscribe", "presence.unsubscribe",
+         %{"service_agent_ids" => ids}},
+        @default_timeout + 1_000
+      )
 
   def report_health(server, metrics), do: push(server, "health.report", %{"metrics" => metrics})
 
@@ -84,7 +90,14 @@ defmodule RobotsCenter.Realtime do
     do: push(server, "rpc.response", %{"correlation_id" => id, "result" => result})
 
   def queue_stats(server), do: push(server, "queue.stats")
-  def unsubscribe_queue(server), do: push(server, "queue.unsubscribe")
+
+  def unsubscribe_queue(server),
+    do:
+      GenServer.call(
+        server,
+        {:unsubscribe, "queue.subscribe", "queue.unsubscribe", %{}},
+        @default_timeout + 1_000
+      )
 
   def command_accepted(server, id, result \\ %{}),
     do: push(server, "command.accepted", %{"command_id" => id, "result_payload" => result})
@@ -145,6 +158,21 @@ defmodule RobotsCenter.Realtime do
     end
   end
 
+  def handle_call({:unsubscribe, subscription_event, event, payload}, _from, state) do
+    case checked_push(state.channel, event, payload, @default_timeout) do
+      {:ok, response} ->
+        subscriptions =
+          Map.reject(state.subscriptions, fn {_key, {name, _payload}} ->
+            name == subscription_event
+          end)
+
+        {:reply, {:ok, response}, %{state | subscriptions: subscriptions}}
+
+      error ->
+        {:reply, error, state}
+    end
+  end
+
   @impl true
   def handle_info(:connect, %{stopping: false} = state) do
     state = cancel_timer(state, :reconnect_timer)
@@ -170,8 +198,13 @@ defmodule RobotsCenter.Realtime do
   end
 
   def handle_info(%Message{event: event, payload: payload}, state) do
-    send(state.owner, {:robots_center_realtime, event, payload})
-    {:noreply, state}
+    if event in ["phx_error", "phx_close"] do
+      send(state.owner, {:robots_center_realtime, :disconnected, payload})
+      {:noreply, state |> disconnect() |> schedule_reconnect()}
+    else
+      send(state.owner, {:robots_center_realtime, event, payload})
+      {:noreply, state}
+    end
   end
 
   def handle_info({:EXIT, pid, reason}, %{stopping: false} = state)
@@ -196,27 +229,39 @@ defmodule RobotsCenter.Realtime do
   defp connect(state) do
     Process.flag(:trap_exit, true)
 
-    with {:ok, token} <- fetch_token(state.token_provider),
-         {:ok, socket} <-
-           PhoenixClient.Socket.start_link(
+    with {:ok, token} <- fetch_token(state.token_provider) do
+      case PhoenixClient.Socket.start_link(
              url: socket_url(state.base_url),
              params: %{"socket_token" => token.socket_token},
              reconnect?: false,
              heartbeat_interval: @heartbeat_interval
-           ),
-         :ok <- await_connected(socket, 100),
-         {:ok, _reply, channel} <-
-           PhoenixClient.Channel.join(
-             socket,
-             "agent:#{token.service_agent_id}",
-             state.join_payload
            ) do
-      Enum.each(state.subscriptions, fn {_key, {event, payload}} ->
-        PhoenixClient.Channel.push_async(channel, event, payload)
-      end)
-
-      {:ok, %{state | socket: socket, channel: channel}}
+        {:ok, socket} -> connect_channel(state, token, socket)
+        error -> error
+      end
     end
+  end
+
+  defp connect_channel(state, token, socket) do
+    result =
+      with :ok <- await_connected(socket, 100),
+           {:ok, _reply, channel} <-
+             PhoenixClient.Channel.join(
+               socket,
+               "agent:#{token.service_agent_id}",
+               state.join_payload
+             ) do
+        Enum.each(state.subscriptions, fn {_key, {event, payload}} ->
+          PhoenixClient.Channel.push_async(channel, event, payload)
+        end)
+
+        {:ok, %{state | socket: socket, channel: channel}}
+      end
+
+    if match?({:error, _}, result) and Process.alive?(socket),
+      do: PhoenixClient.Socket.stop(socket)
+
+    result
   end
 
   defp fetch_token(provider) do

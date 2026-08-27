@@ -127,11 +127,29 @@ class Realtime:
     async def subscribe_queue(self) -> dict[str, Any]:
         return await self._subscribe("queue.subscribe", {})
 
+    async def send_message(self, message: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.push("message.send", {"message": dict(message)})
+
+    async def discover(self, query: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.push("agent.discover", dict(query))
+
+    async def create_task(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.push("task.create", {"task": dict(task)})
+
+    async def rpc_request(self, message: Mapping[str, Any]) -> dict[str, Any]:
+        return await self.push("rpc.request", {"message": dict(message)})
+
+    async def ready(self, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return await self.push("agent.ready", dict(metadata or {}))
+
+    async def disconnect(self) -> dict[str, Any]:
+        return await self.push("disconnect")
+
     async def acknowledge_message(self, message_id: str) -> dict[str, Any]:
         return await self.push("message.delivered", {"message_id": message_id})
 
-    async def complete_task(self, task_id: str, result: Any = None) -> dict[str, Any]:
-        return await self.push("task.complete", {"task_id": task_id, "result": result})
+    async def complete_task(self, task_id: str, result: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return await self.push("task.complete", {"task_id": task_id, "result": dict(result or {})})
 
     async def fail_task(self, task_id: str, error_message: str) -> dict[str, Any]:
         return await self.push("task.fail", {"task_id": task_id, "error_message": error_message})
@@ -158,7 +176,21 @@ class Realtime:
         return await self.push("group.broadcast", {"group_id": group_id, "message": dict(message)})
 
     async def unsubscribe_presence(self, service_agent_ids: list[str]) -> dict[str, Any]:
-        return await self.push("presence.unsubscribe", {"service_agent_ids": service_agent_ids})
+        response = await self.push("presence.unsubscribe", {"service_agent_ids": service_agent_ids})
+        removed = set(service_agent_ids)
+        retained: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {}
+        for key, value in self._subscriptions.items():
+            event, payload = value
+            if event == "presence.subscribe":
+                remaining = [item for item in payload.get("service_agent_ids", []) if item not in removed]
+                if remaining:
+                    payload = {**payload, "service_agent_ids": remaining}
+                    key = (event, json.dumps(payload, sort_keys=True))
+                else:
+                    continue
+            retained[key] = (event, payload)
+        self._subscriptions = retained
+        return response
 
     async def report_health(self, metrics: Mapping[str, Any]) -> dict[str, Any]:
         return await self.push("health.report", {"metrics": dict(metrics)})
@@ -243,12 +275,12 @@ class Realtime:
                         future.set_result(payload)
                 elif event not in {"phx_reply", "phx_close"}:
                     await self._events.put((event, payload))
-            except (OSError, websockets.ConnectionClosed) as exc:
+            except (OSError, websockets.ConnectionClosed, RealtimeError) as exc:
                 self._socket = None
                 for future in self._pending.values():
                     if not future.done():
                         future.set_exception(RealtimeError(str(exc)))
-                if not self.reconnect or self._stopping:
+                if self._terminal or not self.reconnect or self._stopping:
                     self._terminal = True
                     await self._events.put(("error", {"reason": str(exc)}))
                     return
@@ -260,9 +292,9 @@ class Realtime:
                     async with self._connect_lock:
                         await self._open()
                     await self._events.put(("reconnected", {}))
-                except (OSError, RealtimeError):
+                except (OSError, RealtimeError) as reconnect_error:
                     if self._terminal:
-                        await self._events.put(("error", {"reason": "terminal_connection_error"}))
+                        await self._events.put(("error", {"reason": str(reconnect_error)}))
                         return
                     continue
 

@@ -17,4 +17,16 @@ describe("Realtime", () => {
     expect((realtime as unknown as {subscriptions: Map<string, unknown>}).subscriptions.size).toBe(4);
     realtime.close();
   });
+
+  it("does not retain a failed subscription", async () => {
+    const realtime = new Realtime({socketToken: "token", serviceAgentId: "agent"});
+    realtime.push = vi.fn(async () => { throw new RealtimeError("failure"); });
+    await expect(realtime.subscribeQueue()).rejects.toBeInstanceOf(RealtimeError);
+    expect((realtime as unknown as {subscriptions: Map<string, unknown>}).subscriptions.size).toBe(0);
+  });
+
+  it("rejects oversized frames", async () => {
+    const realtime = new Realtime({socketToken: "token", serviceAgentId: "agent"});
+    await expect(realtime.push("event", {body: "x".repeat(66_000)})).rejects.toThrow("64 KiB");
+  });
 });

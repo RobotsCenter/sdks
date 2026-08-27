@@ -30,6 +30,9 @@ export class Realtime {
 
   async connect(): Promise<Record<string, unknown>> {
     this.explicitlyClosed = false;
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.channel?.leave();
+    this.socket?.disconnect();
     const fresh = this.options.tokenProvider ? await this.options.tokenProvider() : undefined;
     const socketToken = fresh?.socket_token ?? this.options.socketToken;
     const serviceAgentId = fresh?.service_agent_id ?? this.options.serviceAgentId;
@@ -43,9 +46,16 @@ export class Realtime {
     };
     this.socket = new Socket(`${base}/socket`, socketOptions);
     this.socket.onClose(() => this.scheduleReconnect());
+    this.socket.onError(() => this.scheduleReconnect());
     this.channel = this.socket.channel(`agent:${serviceAgentId}`, this.options.joinPayload ?? {});
     this.socket.connect();
-    const response = await pushPromise(this.channel.join(this.timeoutMs), "channel join");
+    let response: Record<string, unknown>;
+    try {
+      response = await pushPromise(this.channel.join(this.timeoutMs), "channel join");
+    } catch (error) {
+      this.scheduleReconnect();
+      throw error;
+    }
     this.reconnectAttempt = 0;
     for (const [event, payload] of this.subscriptions.values()) this.channel.push(event, payload, this.timeoutMs);
     this.heartbeatTimer = setInterval(() => this.channel?.push("agent.heartbeat", {}, this.timeoutMs), 20_000);
@@ -65,7 +75,8 @@ export class Realtime {
   }
 
   push(event: string, payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-    const bytes = new TextEncoder().encode(JSON.stringify([null, null, "agent", event, payload])).byteLength;
+    const topic = this.channel?.topic ?? "agent";
+    const bytes = new TextEncoder().encode(JSON.stringify([null, null, topic, event, payload])).byteLength;
     if (bytes > 65_536) return Promise.reject(new RealtimeError("Phoenix frame exceeds the 64 KiB payload limit"));
     if (!this.channel) return Promise.reject(new RealtimeError("realtime channel is not connected"));
     return pushPromise(this.channel.push(event, payload, this.timeoutMs), event);
@@ -91,7 +102,7 @@ export class Realtime {
   subscribePresence(serviceAgentIds: string[]) { return this.subscribe("presence.subscribe", {service_agent_ids: serviceAgentIds}); }
   subscribeQueue() { return this.subscribe("queue.subscribe", {}); }
   acknowledgeMessage(messageId: string) { return this.push("message.delivered", {message_id: messageId}); }
-  completeTask(taskId: string, result: unknown = null) { return this.push("task.complete", {task_id: taskId, result}); }
+  completeTask(taskId: string, result: Record<string, unknown> = {}) { return this.push("task.complete", {task_id: taskId, result}); }
   failTask(taskId: string, errorMessage: string) { return this.push("task.fail", {task_id: taskId, error_message: errorMessage}); }
   cancelTask(taskId: string) { return this.push("task.cancel", {task_id: taskId}); }
   retryTask(taskId: string) { return this.push("task.retry", {task_id: taskId}); }
@@ -100,7 +111,7 @@ export class Realtime {
   addGroupMember(groupId: string, serviceAgentId: string, role = "member") { return this.push("group.add_member", {group_id: groupId, service_agent_id: serviceAgentId, role}); }
   removeGroupMember(groupId: string, serviceAgentId: string) { return this.push("group.remove_member", {group_id: groupId, service_agent_id: serviceAgentId}); }
   broadcastGroup(groupId: string, message: Record<string, unknown>) { return this.push("group.broadcast", {group_id: groupId, message}); }
-  unsubscribePresence(serviceAgentIds: string[]) { return this.push("presence.unsubscribe", {service_agent_ids: serviceAgentIds}); }
+  async unsubscribePresence(serviceAgentIds: string[]) { const result = await this.push("presence.unsubscribe", {service_agent_ids: serviceAgentIds}); for (const [key, value] of this.subscriptions) if (value[0] === "presence.subscribe") this.subscriptions.delete(key); return result; }
   reportHealth(metrics: Record<string, unknown>) { return this.push("health.report", {metrics}); }
   rpcResponse(correlationId: string, result: unknown) { return this.push("rpc.response", {correlation_id: correlationId, result}); }
   queueStats() { return this.push("queue.stats"); }
@@ -110,9 +121,10 @@ export class Realtime {
   commandComplete(commandId: string, resultPayload: Record<string, unknown> = {}) { return this.push("command.complete", {command_id: commandId, result_payload: resultPayload}); }
   commandFail(commandId: string, errorPayload: Record<string, unknown>) { return this.push("command.fail", {command_id: commandId, error_payload: errorPayload}); }
 
-  private subscribe(event: string, payload: Record<string, unknown>) {
+  private async subscribe(event: string, payload: Record<string, unknown>) {
+    const response = await this.push(event, payload);
     this.subscriptions.set(`${event}:${JSON.stringify(payload)}`, [event, payload]);
-    return this.push(event, payload);
+    return response;
   }
 
   private scheduleReconnect(): void {
