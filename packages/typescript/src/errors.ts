@@ -37,6 +37,7 @@ export class RateLimitError extends ApiError {
     super(message, status, code, details, requestId);
   }
 }
+export class QuotaError extends ApiError { override readonly name = "QuotaError"; }
 export class PaymentRequiredError extends ApiError { override readonly name = "PaymentRequiredError"; }
 export class NotFoundError extends ApiError { override readonly name = "NotFoundError"; }
 export class ConflictError extends ApiError { override readonly name = "ConflictError"; }

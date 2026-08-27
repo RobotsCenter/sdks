@@ -1,8 +1,8 @@
-import { ApiError, AuthenticationError, AuthorizationError, ConflictError, NotFoundError, PaymentRequiredError, RateLimitError, TransportError, ValidationError } from "./errors.js";
+import { ApiError, AuthenticationError, AuthorizationError, ConflictError, NotFoundError, PaymentRequiredError, QuotaError, RateLimitError, TransportError, ValidationError } from "./errors.js";
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export interface ClientOptions {
-  token: string;
+  token?: string;
   baseUrl?: string;
   timeoutMs?: number;
   maxRetries?: number;
@@ -14,7 +14,7 @@ const retryableMethods = new Set(["GET"]);
 
 export class RobotsCenterClient {
   readonly baseUrl: string;
-  readonly token?: string;
+  readonly token: string | undefined;
   readonly timeoutMs: number;
   readonly maxRetries: number;
   private readonly fetcher: typeof globalThis.fetch;
@@ -65,7 +65,7 @@ export class RobotsCenterClient {
   me() { return this.request("GET", "/api/v1/agents/me"); }
   updateMe(attributes: Json) { return this.request("PATCH", "/api/v1/agents/me", json(attributes)); }
   createCredential(credential: Json) { return this.request("POST", "/api/v1/agents/me/credentials", json(credential)); }
-  exchangeAgentToken(apiKey: string) { return this.request("POST", "/api/v1/agent_tokens", json({ api_key: apiKey })); }
+  exchangeAgentToken(apiKey: string, scopes?: string[]) { return this.request("POST", "/api/v1/agent_tokens", json({ api_key: apiKey, ...(scopes ? {scopes} : {}) })); }
   register(registration: Json) { return this.request("POST", "/api/v1/register", json(registration)); }
   claimEnrollment(enrollment: Json) { return this.request("POST", "/api/v1/enrollments/claim", json(enrollment)); }
   messages(params: Record<string, string> = {}) { return this.request("GET", query("/api/v1/messages", params)); }
@@ -87,7 +87,7 @@ export class RobotsCenterClient {
   deleteGroup(id: string) { return this.request("DELETE", `/api/v1/groups/${encodeURIComponent(id)}`); }
   addGroupMember(id: string, member: Json) { return this.request("POST", `/api/v1/groups/${encodeURIComponent(id)}/members`, json(member)); }
   removeGroupMember(id: string, agentId: string) { return this.request("DELETE", `/api/v1/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(agentId)}`); }
-  broadcastGroup(id: string, message: Json) { return this.request("POST", `/api/v1/groups/${encodeURIComponent(id)}/messages`, json({message})); }
+  broadcastGroup(id: string, message: Json, excludeSender = true) { return this.request("POST", `/api/v1/groups/${encodeURIComponent(id)}/messages`, json({message, exclude_sender: excludeSender})); }
   presence(serviceAgentIds: string[]) { return this.request("GET", query("/api/v1/presence", { service_agent_ids: serviceAgentIds.join(",") })); }
   reportHealth(report: Json) { return this.request("POST", "/api/v1/health_reports", json(report)); }
   agentHealth(id: string) { return this.request("GET", `/api/v1/agents/${encodeURIComponent(id)}/health`); }
@@ -119,8 +119,9 @@ function query(path: string, params: Record<string, string>): string {
 }
 
 async function responseError(response: Response): Promise<ApiError> {
+  const raw = await response.text();
   let details: unknown;
-  try { details = await response.json(); } catch { details = await response.text(); }
+  try { details = JSON.parse(raw); } catch { details = raw; }
   const body = typeof details === "object" && details ? details as Record<string, unknown> : {};
   const message = String(body.detail ?? body.message ?? body.title ?? response.statusText);
   const code = body.code ?? body.error;
@@ -128,14 +129,22 @@ async function responseError(response: Response): Promise<ApiError> {
   if (response.status === 401) return new AuthenticationError(...args);
   if (response.status === 403) return new AuthorizationError(...args);
   if (response.status === 429) {
-    const retry = Number(response.headers.get("retry-after"));
-    return new RateLimitError(...args, Number.isFinite(retry) ? retry : undefined);
+    if (code === "quota_exceeded" || code === "workspace_quota_exceeded") return new QuotaError(...args);
+    return new RateLimitError(...args, retryAfterSeconds(response.headers.get("retry-after")));
   }
   if (response.status === 402) return new PaymentRequiredError(...args);
   if (response.status === 404) return new NotFoundError(...args);
   if (response.status === 409) return new ConflictError(...args);
   if (response.status === 422) return new ValidationError(...args);
   return new ApiError(...args);
+}
+
+function retryAfterSeconds(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return seconds;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, (date - Date.now()) / 1000) : undefined;
 }
 
 const sleep = (seconds: number) => new Promise<void>((resolve) => setTimeout(resolve, seconds * 1000));

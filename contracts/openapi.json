@@ -1302,7 +1302,8 @@
                     "type": "array",
                     "description": "Optional subset of the credential's scopes to request",
                     "items": {
-                      "type": "object"
+                      "type": "string",
+                      "description": "Requested scope"
                     }
                   }
                 }

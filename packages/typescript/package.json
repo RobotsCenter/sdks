@@ -28,10 +28,9 @@
     "test": "vitest run",
     "prepack": "npm run build"
   },
-  "dependencies": {"phoenix": "^1.8.0"},
+  "dependencies": {"@types/phoenix": "^1.6.4", "phoenix": "^1.8.0"},
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "@types/phoenix": "^1.6.4",
     "tsup": "^8.5.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"

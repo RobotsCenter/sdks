@@ -12,6 +12,14 @@ from websockets.asyncio.client import ClientConnection
 
 from .errors import RealtimeError
 
+TERMINAL_REASONS = {
+    "unauthorized",
+    "workspace_frozen",
+    "workspace_paused",
+    "workspace_archived",
+    "workspace_unavailable",
+}
+
 
 class Realtime:
     """Phoenix Channels v2 client for an authenticated agent topic."""
@@ -190,11 +198,14 @@ class Realtime:
         assert self.service_agent_id is not None
         self.url = _socket_url(self.base_url, self.socket_token)
         self.topic = f"agent:{self.service_agent_id}"
-        self._socket = await websockets.connect(self.url, ping_interval=None, max_size=1_048_576)
+        self._socket = await websockets.connect(self.url, ping_interval=None, max_size=65_536)
         self._join_ref = self._next_ref()
         await self._send("phx_join", self.join_payload, ref=self._join_ref)
         reply = await self._receive()
         if reply[3] != "phx_reply" or reply[4].get("status") != "ok":
+            response = reply[4].get("response", {})
+            reason = response.get("reason") if isinstance(response, dict) else None
+            self._terminal = reason in TERMINAL_REASONS
             await self._socket.close()
             self._socket = None
             raise RealtimeError(f"channel join failed: {reply[4]}")
@@ -203,8 +214,9 @@ class Realtime:
 
     async def _subscribe(self, event: str, payload: dict[str, Any]) -> dict[str, Any]:
         key = (event, json.dumps(payload, sort_keys=True))
+        response = await self.push(event, payload)
         self._subscriptions[key] = (event, payload)
-        return await self.push(event, payload)
+        return response
 
     async def _heartbeat_loop(self) -> None:
         while not self._stopping:
@@ -249,6 +261,9 @@ class Realtime:
                         await self._open()
                     await self._events.put(("reconnected", {}))
                 except (OSError, RealtimeError):
+                    if self._terminal:
+                        await self._events.put(("error", {"reason": "terminal_connection_error"}))
+                        return
                     continue
 
     async def _send(self, event: str, payload: dict[str, Any], *, ref: str | None = None) -> None:
@@ -262,7 +277,10 @@ class Realtime:
     async def _receive(self) -> list[Any]:
         if self._socket is None:
             raise RealtimeError("realtime connection is not open")
-        raw = json.loads(await self._socket.recv())
+        encoded = await self._socket.recv()
+        if len(encoded if isinstance(encoded, bytes) else encoded.encode()) > 65_536:
+            raise RealtimeError("Phoenix frame exceeds the 64 KiB payload limit")
+        raw = json.loads(encoded)
         if not isinstance(raw, list) or len(raw) != 5:
             raise RealtimeError(f"invalid Phoenix v2 frame: {raw!r}")
         return raw

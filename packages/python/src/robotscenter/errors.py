@@ -56,5 +56,9 @@ class ValidationError(APIError):
     pass
 
 
+class QuotaError(APIError):
+    pass
+
+
 class RealtimeError(RobotsCenterError):
     pass

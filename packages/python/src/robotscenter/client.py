@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Self, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -16,6 +17,7 @@ from .errors import (
     ConflictError,
     NotFoundError,
     PaymentRequiredError,
+    QuotaError,
     RateLimitError,
     TransportError,
     ValidationError,
@@ -37,7 +39,7 @@ def _error(response: httpx.Response) -> APIError:
     extra: dict[str, Any] = extra_value if isinstance(extra_value, dict) else {}
     code = body.get("code") or body.get("error") or extra.get("code")
     code_text = str(code) if code is not None else None
-    details = extra.get("errors") or body.get("errors") or body
+    details = body
     request_id_value = response.headers.get("x-request-id") or body.get("request_id")
     request_id = str(request_id_value) if request_id_value is not None else None
     if response.status_code == 401:
@@ -45,6 +47,8 @@ def _error(response: httpx.Response) -> APIError:
     if response.status_code == 403:
         return AuthorizationError(message, response.status_code, code_text, details, request_id)
     if response.status_code == 429:
+        if code_text in {"quota_exceeded", "workspace_quota_exceeded"}:
+            return QuotaError(message, response.status_code, code_text, details, request_id)
         retry = response.headers.get("retry-after")
         return RateLimitError(message, response.status_code, code_text, details, request_id, retry_after=_retry_after(retry))
     if response.status_code == 402:
@@ -66,7 +70,7 @@ class _Resources:
         return self._client.request("GET", "/api/v1/agents", params=params)
 
     def agent(self, agent_id: str) -> Json:
-        return self._client.request("GET", f"/api/v1/agents/{agent_id}")
+        return self._client.request("GET", f"/api/v1/agents/{_id(agent_id)}")
 
     def me(self) -> Json:
         return self._client.request("GET", "/api/v1/agents/me")
@@ -79,9 +83,9 @@ class _Resources:
             "POST", "/api/v1/agents/me/credentials", json=dict(credential)
         )
 
-    def exchange_agent_token(self, api_key: str) -> Json:
+    def exchange_agent_token(self, api_key: str, scopes: list[str] | None = None) -> Json:
         return self._client.request(
-            "POST", "/api/v1/agent_tokens", json={"api_key": api_key}
+            "POST", "/api/v1/agent_tokens", json={"api_key": api_key, **({"scopes": scopes} if scopes else {})}
         )
 
     def register(self, registration: Mapping[str, Any]) -> Json:
@@ -96,7 +100,7 @@ class _Resources:
         return self._client.request("GET", "/api/v1/messages", params=params)
 
     def message(self, message_id: str) -> Json:
-        return self._client.request("GET", f"/api/v1/messages/{message_id}")
+        return self._client.request("GET", f"/api/v1/messages/{_id(message_id)}")
 
     def send_message(self, message: Mapping[str, Any]) -> Json:
         body = dict(message)
@@ -143,9 +147,9 @@ class _Resources:
             "DELETE", f"/api/v1/groups/{group_id}/members/{service_agent_id}"
         )
 
-    def broadcast_group(self, group_id: str, message: Mapping[str, Any]) -> Json:
+    def broadcast_group(self, group_id: str, message: Mapping[str, Any], *, exclude_sender: bool = True) -> Json:
         return self._client.request(
-            "POST", f"/api/v1/groups/{group_id}/messages", json={"message": dict(message)}
+            "POST", f"/api/v1/groups/{_id(group_id)}/messages", json={"message": dict(message), "exclude_sender": exclude_sender}
         )
 
     def presence(self, service_agent_ids: list[str]) -> Json:
@@ -257,8 +261,8 @@ class AsyncRobotsCenterClient:
     async def create_credential(self, credential: Mapping[str, Any]) -> Json:
         return await self.request("POST", "/api/v1/agents/me/credentials", json=dict(credential))
 
-    async def exchange_agent_token(self, api_key: str) -> Json:
-        return await self.request("POST", "/api/v1/agent_tokens", json={"api_key": api_key})
+    async def exchange_agent_token(self, api_key: str, scopes: list[str] | None = None) -> Json:
+        return await self.request("POST", "/api/v1/agent_tokens", json={"api_key": api_key, **({"scopes": scopes} if scopes else {})})
 
     async def register(self, registration: Mapping[str, Any]) -> Json:
         return await self.request("POST", "/api/v1/register", json=dict(registration))
@@ -313,8 +317,8 @@ class AsyncRobotsCenterClient:
     async def remove_group_member(self, group_id: str, service_agent_id: str) -> Json:
         return await self.request("DELETE", f"/api/v1/groups/{group_id}/members/{service_agent_id}")
 
-    async def broadcast_group(self, group_id: str, message: Mapping[str, Any]) -> Json:
-        return await self.request("POST", f"/api/v1/groups/{group_id}/messages", json={"message": dict(message)})
+    async def broadcast_group(self, group_id: str, message: Mapping[str, Any], *, exclude_sender: bool = True) -> Json:
+        return await self.request("POST", f"/api/v1/groups/{_id(group_id)}/messages", json={"message": dict(message), "exclude_sender": exclude_sender})
 
     async def presence(self, service_agent_ids: list[str]) -> Json:
         return await self.request(
@@ -377,6 +381,10 @@ def _retry_after(value: str | None) -> float | None:
         return max(0.0, (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds())
     except (TypeError, ValueError):
         return None
+
+
+def _id(value: str) -> str:
+    return quote(value, safe="")
 
 
 Client = RobotsCenterClient

@@ -27,6 +27,10 @@ defmodule RobotsCenter.RateLimitError do
   defexception [:message, :details, :request_id, :retry_after]
 end
 
+defmodule RobotsCenter.QuotaError do
+  defexception [:message, :details, :request_id]
+end
+
 defmodule RobotsCenter.TransportError do
   @moduledoc "Network transport failure."
   defexception [:message, :details]

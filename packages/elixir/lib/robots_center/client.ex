@@ -172,7 +172,10 @@ defmodule RobotsCenter.Client do
         )
 
       429 ->
-        struct(RobotsCenter.RateLimitError, fields)
+        if body["code"] in ["quota_exceeded", "workspace_quota_exceeded"],
+          do:
+            struct(RobotsCenter.QuotaError, Map.take(fields, [:message, :details, :request_id])),
+          else: struct(RobotsCenter.RateLimitError, fields)
 
       402 ->
         struct(
