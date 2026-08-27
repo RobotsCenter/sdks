@@ -57,7 +57,7 @@
     {
       "name": "message.send",
       "reply": "%{message_id, status, recipients, cost_cents, remaining_balance_cents}",
-      "description": "Send a direct, broadcast, or exact capability-matched message. capability_match compares advertised capability strings exactly; it does not perform semantic or natural-language matching. Also accepted as send.",
+      "description": "Send a direct, broadcast, or exact capability-matched message. capability_match compares advertised capability strings exactly; it does not perform semantic or natural-language matching.",
       "payload": {
         "message": "object -- message_type, recipient, payload, and optional message_id/correlation_id"
       },
@@ -68,7 +68,7 @@
     {
       "name": "message.delivered",
       "reply": "%{message_id, status: \"delivered\"}",
-      "description": "Acknowledge receipt of a message delivered to this agent. Also accepted as message_delivered.",
+      "description": "Acknowledge receipt of a message delivered to this agent.",
       "payload": {
         "message_id": "string -- protocol message identifier"
       },
@@ -79,7 +79,7 @@
     {
       "name": "agent.discover",
       "reply": "%{agents: [...], total: integer}",
-      "description": "Discover service agents in the authenticated workspace by exact advertised capability string. It does not perform semantic or natural-language matching. Also accepted as discover. When capability is set, availability defaults to online. Results are Enum.take(limit) with limit default 25, clamped 1..100.",
+      "description": "Discover service agents in the authenticated workspace by exact advertised capability string. It does not perform semantic or natural-language matching. When capability is set, availability defaults to online. Results are Enum.take(limit) with limit default 25, clamped 1..100.",
       "payload": {
         "limit": "integer -- optional result cap, default 25, max 100",
         "framework": "string -- optional framework filter",
@@ -93,7 +93,7 @@
     {
       "name": "task.create",
       "reply": "%{task_id, task_type, status, priority, ...}",
-      "description": "Create and optionally deliver a workspace-scoped delegated task. Also accepted as task_create.",
+      "description": "Create and optionally deliver a workspace-scoped delegated task.",
       "payload": {
         "task": "object -- task_type, payload, priority, recipient_service_agent_id, scheduled_at, and timeout_seconds"
       },
@@ -104,7 +104,7 @@
     {
       "name": "task.complete",
       "reply": "%{task_id, status: completed, result, completed_at, ...}",
-      "description": "Complete a running task as its authenticated recipient. Also accepted as task_complete.",
+      "description": "Complete a running task as its authenticated recipient.",
       "payload": {
         "result": "object -- optional result payload",
         "retry_count": "integer -- attempt number from message metadata; defaults to 0",
@@ -117,7 +117,7 @@
     {
       "name": "task.fail",
       "reply": "%{task_id, status: failed, error_message, completed_at, ...}",
-      "description": "Fail a running task as its authenticated recipient. Also accepted as task_fail.",
+      "description": "Fail a running task as its authenticated recipient.",
       "payload": {
         "retry_count": "integer -- attempt number from message metadata; defaults to 0",
         "task_id": "UUID",
@@ -130,7 +130,7 @@
     {
       "name": "task.cancel",
       "reply": "%{task_id, status, ...}",
-      "description": "Cancel a workspace-scoped task. Also accepted as task_cancel. Terminal tasks are refused.",
+      "description": "Cancel a workspace-scoped task. Terminal tasks are refused.",
       "payload": {
         "task_id": "UUID"
       },
@@ -141,7 +141,7 @@
     {
       "name": "task.retry",
       "reply": "%{task_id, status, retry_count, ...}",
-      "description": "Retry a failed task when retry_count < max_retries. Also accepted as task_retry.",
+      "description": "Retry a failed task when retry_count < max_retries.",
       "payload": {
         "task_id": "UUID"
       },
@@ -152,7 +152,7 @@
     {
       "name": "task.subscribe",
       "reply": "%{task_ids: array<UUID>}",
-      "description": "Subscribe to lifecycle updates for selected tasks. Also accepted as task_subscribe. Requires tasks:read.",
+      "description": "Subscribe to lifecycle updates for selected tasks. Requires tasks:read.",
       "payload": {
         "task_ids": "array<UUID> -- tasks to observe; empty list is valid"
       },
@@ -163,7 +163,7 @@
     {
       "name": "group.create",
       "reply": "%{group_id, name, leader_service_agent_id, members, ...}",
-      "description": "Create an agent group led by the authenticated service agent. Also accepted as group_create.",
+      "description": "Create an agent group led by the authenticated service agent.",
       "payload": {
         "group": "object -- name, description, capabilities, and metadata"
       },
@@ -174,7 +174,7 @@
     {
       "name": "group.list",
       "reply": "%{groups: [...]}",
-      "description": "List workspace groups. Also accepted as group_list. Requires groups:read.",
+      "description": "List workspace groups. Requires groups:read.",
       "payload": {},
       "required_scopes": [
         "groups:read"
@@ -183,7 +183,7 @@
     {
       "name": "group.add_member",
       "reply": "%{service_agent_id, role, joined_at}",
-      "description": "Add a service agent to a group. Also accepted as group_add_member. Requires groups:write.",
+      "description": "Add a service agent to a group. Requires groups:write.",
       "payload": {
         "role": "string -- optional, defaults to member",
         "group_id": "UUID",
@@ -196,7 +196,7 @@
     {
       "name": "group.remove_member",
       "reply": "%{removed: service_agent_id}",
-      "description": "Remove a service agent from a group. Also accepted as group_remove_member. Requires groups:write.",
+      "description": "Remove a service agent from a group. Requires groups:write.",
       "payload": {
         "group_id": "UUID",
         "service_agent_id": "UUID"
@@ -208,7 +208,7 @@
     {
       "name": "group.broadcast",
       "reply": "%{group_id, recipients: [service_agent_id]}",
-      "description": "Push a map to currently connected group members via ConnectionManager. Also accepted as group_broadcast. Online-only: no persist, bill, or offline queue.",
+      "description": "Push a map to currently connected group members via ConnectionManager. Online-only: no persist, bill, or offline queue.",
       "payload": {
         "message": "object -- body delivered to online members",
         "group_id": "UUID",
@@ -221,7 +221,7 @@
     {
       "name": "group.subscribe",
       "reply": "%{group_ids: array<UUID>}",
-      "description": "Subscribe to group metadata and membership updates. Also accepted as group_subscribe. Requires groups:read.",
+      "description": "Subscribe to group metadata and membership updates. Requires groups:read.",
       "payload": {
         "group_ids": "array<UUID>"
       },
@@ -232,7 +232,7 @@
     {
       "name": "presence.subscribe",
       "reply": "%{subscribed: true, agents: %{service_agent_id => status}}",
-      "description": "Subscribe to presence changes for selected service agents. Also accepted as presence_subscribe.",
+      "description": "Subscribe to presence changes for selected service agents.",
       "payload": {
         "service_agent_ids": "array<UUID> -- service agents to observe"
       },
@@ -243,7 +243,7 @@
     {
       "name": "presence.unsubscribe",
       "reply": "%{subscribed: false}",
-      "description": "Stop receiving presence updates for the listed agents. Also accepted as presence_unsubscribe. Requires presence:read.",
+      "description": "Stop receiving presence updates for the listed agents. Requires presence:read.",
       "payload": {
         "service_agent_ids": "array<UUID>"
       },
@@ -254,7 +254,7 @@
     {
       "name": "health.report",
       "reply": "%{status: \"recorded\", timestamp: ISO8601}",
-      "description": "Publish self-reported health telemetry for the authenticated agent. Also accepted as health_report.",
+      "description": "Publish self-reported health telemetry for the authenticated agent.",
       "payload": {
         "metrics": "object -- cpu_usage, memory_usage, response_time_avg, error_rate, and custom_metrics"
       },
@@ -265,7 +265,7 @@
     {
       "name": "rpc.request",
       "reply": "%{correlation_id, result}",
-      "description": "Send a correlated request to another service agent and await its response. Also accepted as rpc_request.",
+      "description": "Send a correlated request to another service agent and await its response.",
       "payload": {
         "message": "object -- recipient, payload, and optional correlation_id"
       },
@@ -276,7 +276,7 @@
     {
       "name": "rpc.response",
       "reply": "%{correlation_id}",
-      "description": "Answer a pending RPC request. Also accepted as rpc_response. Requires rpc:write.",
+      "description": "Answer a pending RPC request. Requires rpc:write.",
       "payload": {
         "result": "any JSON value -- response body",
         "correlation_id": "string -- required"
@@ -288,7 +288,7 @@
     {
       "name": "queue.subscribe",
       "reply": "%{subscribed: true}",
-      "description": "Subscribe to workspace-scoped offline queue lifecycle updates for this agent. Also accepted as queue_subscribe.",
+      "description": "Subscribe to workspace-scoped offline queue lifecycle updates for this agent.",
       "payload": {},
       "required_scopes": [
         "queue:read"
@@ -297,7 +297,7 @@
     {
       "name": "queue.stats",
       "reply": "%{total_pending, by_priority}",
-      "description": "Read offline-queue counts for the workspace. Also accepted as queue_stats. Requires queue:read.",
+      "description": "Read offline-queue counts for the workspace. Requires queue:read.",
       "payload": {},
       "required_scopes": [
         "queue:read"
@@ -306,7 +306,7 @@
     {
       "name": "queue.unsubscribe",
       "reply": "%{subscribed: false}",
-      "description": "Stop receiving offline-queue lifecycle updates. Also accepted as queue_unsubscribe. Requires queue:read.",
+      "description": "Stop receiving offline-queue lifecycle updates. Requires queue:read.",
       "payload": {},
       "required_scopes": [
         "queue:read"

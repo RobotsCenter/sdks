@@ -1,0 +1,15 @@
+{
+  "source_repository": "https://gitlab.com/zaali/agent_ops",
+  "source_commit": "a90c066d383f1a1420e2ef74de6541e9e600b070",
+  "generated_at": "2026-08-27",
+  "surfaces": {
+    "openapi.json": {
+      "endpoint": "/api/v1/openapi/agent-communication.json",
+      "sha256": "2d55c617f4ffd381d81ab86a0bcafa3acc96715ef5e9173fca7a342bc863cba2"
+    },
+    "realtime.json": {
+      "endpoint": "/api/v1/realtime/agent-communication.json",
+      "sha256": "727add65e0f68e614a128bb54eee68dbc5fe8e4e9419feba1da9333aa81eb6fa"
+    }
+  }
+}

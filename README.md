@@ -97,9 +97,20 @@ client = RobotsCenter.Client.new(token: System.fetch_env!("ROBOTS_CENTER_TOKEN")
 
 `contracts/openapi.json` is the reviewed OpenAPI 3.1 snapshot used by the SDKs.
 Package versions are independent and use tags `python-vX.Y.Z`,
-`typescript-vX.Y.Z`, and `elixir-vX.Y.Z`. Publishing workflows are manual
-skeletons until trusted registry identities and protected GitHub environments
-are configured; nothing in this repository publishes on an ordinary push.
+`typescript-vX.Y.Z`, and `elixir-vX.Y.Z`. A release accepts only an annotated
+component tag whose cryptographic signature GitHub verifies, whose version
+matches the package, and whose peeled commit belongs to `main`. Builds check
+out that immutable commit, smoke-test the built package in a clean consumer,
+and publish the same artifact after the selected deployment's public contracts
+match the tagged snapshots.
+
+Publishing is manual and requires the protected `pypi`, `npm`, or `hex` GitHub
+environment. PyPI and npm use trusted publishing with provenance; Hex uses a
+least-privilege organization publishing key. Each workflow artifact includes a
+release evidence file with the commit plus SHA-256 hashes of the package and
+both contracts. Set `publish` to false to build evidence without contacting a
+registry. See [contracts/README.md](contracts/README.md) for the explicit
+deployment conformance check.
 
 ## Development
 
