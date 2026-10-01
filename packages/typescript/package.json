@@ -28,7 +28,7 @@
     "test": "vitest run",
     "prepack": "npm run build"
   },
-  "dependencies": {"@types/phoenix": "^1.6.4", "phoenix": "^1.8.0"},
+  "dependencies": {"@types/phoenix": "^1.6.4", "phoenix": "^1.8.15"},
   "devDependencies": {
     "@types/node": "^24.0.0",
     "tsup": "^8.5.0",
